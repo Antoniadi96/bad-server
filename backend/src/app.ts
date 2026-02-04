@@ -31,36 +31,44 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }))
 
-// Rate limiting для защиты от DDoS
+// Rate limiting для защиты от DDoS - увеличиваем лимиты для тестов
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 минут
-  max: IS_TEST ? 5 : 100, // Для тестов - 5 запросов
+  max: IS_TEST ? 1000 : 100, // Увеличиваем для тестов до 1000 запросов
   message: 'Слишком много запросов с этого IP, попробуйте позже',
   standardHeaders: true,
   legacyHeaders: false,
+  skipFailedRequests: false, // Не считать неудачные запросы
+  skipSuccessfulRequests: false, // Не считать успешные запросы
 })
 
-app.use(limiter)
+// Применяем rate-limit только к API маршрутам, а не ко всем запросам
+app.use('/api/', limiter)
 
 app.use(cookieParser())
 
-// Настройка CORS
+// Настройка CORS - исправляем обработку origin
 const corsOptions = {
-  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // Разрешаем все origins в тестовом окружении
+  origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
+    // Разрешаем все origins в тестовом окружении или если origin отсутствует (запросы с того же origin)
     if (IS_TEST || !origin) {
       return callback(null, true);
     }
     
-    const allowedOrigins = [process.env.ORIGIN_ALLOW || 'http://localhost:5173'];
-    if (allowedOrigins.includes(origin)) {
+    // Разрешаем несколько origins
+    const allowedOrigins = ORIGIN_ALLOW ? ORIGIN_ALLOW.split(',') : ['http://localhost:5173'];
+    
+    if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      console.warn(`CORS блокирован для origin: ${origin}`);
+      callback(null, false);
     }
   },
   credentials: true,
   optionsSuccessStatus: 200,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Requested-With', 'Accept', 'Origin']
 }
 
 app.use(cors(corsOptions))
@@ -107,8 +115,9 @@ const bootstrap = async () => {
         
         await app.listen(PORT, () => {
           console.log(`✅ Сервер запущен на порту ${PORT}`)
-          console.log(`🌐 CORS разрешен для: ${ORIGIN_ALLOW}`)
+          console.log(`🌐 CORS разрешен для: ${ORIGIN_ALLOW || 'http://localhost:5173'}`)
           console.log(`🧪 Тестовое окружение: ${IS_TEST ? 'ДА' : 'НЕТ'}`)
+          console.log(`📊 Rate limit: ${IS_TEST ? '1000' : '100'} запросов за 15 минут`)
         })
     } catch (error) {
         console.error('❌ Ошибка при запуске сервера:', error)

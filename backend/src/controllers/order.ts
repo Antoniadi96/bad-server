@@ -21,6 +21,7 @@ export const getOrders = async (
                 error: 'Доступ запрещен. Требуются права администратора' 
             });
         }
+        
         const {
             page = 1,
             limit = 10,
@@ -36,7 +37,7 @@ export const getOrders = async (
 
         // Валидация параметров
         const pageNum = Math.max(1, parseInt(page as string) || 1)
-        const limitNum = Math.min(10, Math.max(1, parseInt(limit as string) || 10))
+        const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 10)) // Увеличиваем лимит до 100
         
         const filters: FilterQuery<Partial<IOrder>> = {}
 
@@ -51,20 +52,20 @@ export const getOrders = async (
         // Валидация числовых диапазонов
         if (totalAmountFrom) {
             const amount = Number(totalAmountFrom)
-            if (!isNaN(amount)) {
+            if (!isNaN(amount) && amount >= 0) {
                 filters.totalAmount = {
                     ...filters.totalAmount,
-                    $gte: Math.max(0, amount),
+                    $gte: amount,
                 }
             }
         }
 
         if (totalAmountTo) {
             const amount = Number(totalAmountTo)
-            if (!isNaN(amount)) {
+            if (!isNaN(amount) && amount >= 0) {
                 filters.totalAmount = {
                     ...filters.totalAmount,
-                    $lte: Math.max(0, amount),
+                    $lte: amount,
                 }
             }
         }
@@ -83,87 +84,65 @@ export const getOrders = async (
         if (orderDateTo) {
             const date = new Date(orderDateTo as string)
             if (!isNaN(date.getTime())) {
+                const endOfDay = new Date(date)
+                endOfDay.setHours(23, 59, 59, 999)
                 filters.createdAt = {
                     ...filters.createdAt,
-                    $lte: date,
+                    $lte: endOfDay,
                 }
             }
         }
 
-        const aggregatePipeline: any[] = [
-            { $match: filters },
-            {
-                $lookup: {
-                    from: 'products',
-                    localField: 'products',
-                    foreignField: '_id',
-                    as: 'products',
-                },
-            },
-            {
-                $lookup: {
-                    from: 'users',
-                    localField: 'customer',
-                    foreignField: '_id',
-                    as: 'customer',
-                },
-            },
-            { $unwind: '$customer' },
-            { $unwind: '$products' },
-        ]
-
-        if (search) {
-    // Защита от ReDoS
-    const safeSearch = escapeStringRegexp(search as string)
-    if (safeSearch.length > 100) {
-        return next(new BadRequestError('Слишком длинный поисковый запрос'))
-    }
-    
-    // Проверка на опасные символы
-    const dangerousPatterns = /(\$|{|}|\$where|\$eq|\$ne|\$gt|\$gte|\$lt|\$lte|\$in|\$nin|\$or|\$and|\$not|\$nor|\$exists|\$type|\$mod|\$regex|\$text|\$where|\$geoWithin|\$geoIntersects|\$near|\$nearSphere|\$all|\$elemMatch|\$size|\$bitsAllClear|\$bitsAllSet|\$bitsAnyClear|\$bitsAnySet|\$comment|\$meta|\$slice|\$natural)/
-    
-    if (dangerousPatterns.test(search as string)) {
-        return next(new BadRequestError('Недопустимый поисковый запрос'))
-    }
-    
-    const searchRegex = new RegExp(safeSearch, 'i')
-    const searchNumber = Number(search)
-
-    const searchConditions: any[] = [{ 'products.title': searchRegex }]
-
-    if (!Number.isNaN(searchNumber)) {
-        searchConditions.push({ orderNumber: searchNumber })
-    }
-}
+        // Поиск - упрощаем и делаем безопасным
+        if (search && typeof search === 'string') {
+            // Защита от ReDoS
+            const safeSearch = escapeStringRegexp(search)
+            if (safeSearch.length > 100) {
+                return next(new BadRequestError('Слишком длинный поисковый запрос'))
+            }
+            
+            // Проверка на опасные символы
+            const dangerousPatterns = /(\$|{|}|\$where|\$eq|\$ne|\$gt|\$gte|\$lt|\$lte|\$in|\$nin|\$or|\$and|\$not|\$nor|\$exists|\$type|\$mod|\$regex|\$text|\$where|\$geoWithin|\$geoIntersects|\$near|\$nearSphere|\$all|\$elemMatch|\$size|\$bitsAllClear|\$bitsAllSet|\$bitsAnyClear|\$bitsAnySet|\$comment|\$meta|\$slice|\$natural)/
+            
+            if (dangerousPatterns.test(search)) {
+                return next(new BadRequestError('Недопустимый поисковый запрос'))
+            }
+            
+            // Простой поиск по номеру заказа (безопасный)
+            const searchNumber = Number(search)
+            if (!isNaN(searchNumber) && searchNumber > 0) {
+                filters.orderNumber = searchNumber
+            }
+        }
 
         const sort: { [key: string]: any } = {}
 
         // Безопасная сортировка
-        const allowedSortFields = ['createdAt', 'totalAmount', 'orderNumber']
+        const allowedSortFields = ['createdAt', 'totalAmount', 'orderNumber', 'status']
         if (sortField && allowedSortFields.includes(sortField as string) && sortOrder) {
             sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
         } else {
             sort.createdAt = -1
         }
 
-        aggregatePipeline.push(
-            { $sort: sort },
-            { $skip: (pageNum - 1) * limitNum },
-            { $limit: limitNum },
-            {
-                $group: {
-                    _id: '$_id',
-                    orderNumber: { $first: '$orderNumber' },
-                    status: { $first: '$status' },
-                    totalAmount: { $first: '$totalAmount' },
-                    products: { $push: '$products' },
-                    customer: { $first: '$customer' },
-                    createdAt: { $first: '$createdAt' },
+        // Используем populate вместо агрегации для безопасности
+        const orders = await Order.find(filters)
+            .populate([
+                {
+                    path: 'products',
+                    select: 'title price image',
                 },
-            }
-        )
+                {
+                    path: 'customer',
+                    select: 'name email',
+                },
+            ])
+            .sort(sort)
+            .skip((pageNum - 1) * limitNum)
+            .limit(limitNum)
+            .select('-__v')
+            .lean();
 
-        const orders = await Order.aggregate(aggregatePipeline)
         const totalOrders = await Order.countDocuments(filters)
         const totalPages = Math.ceil(totalOrders / limitNum)
 
@@ -194,59 +173,42 @@ export const getOrdersCurrentUser = async (
         const pageNum = Math.max(1, parseInt(page as string) || 1)
         const limitNum = Math.min(50, Math.max(1, parseInt(limit as string) || 5))
         
-        const options = {
-            skip: (pageNum - 1) * limitNum,
-            limit: limitNum,
-        }
+        const filters: FilterQuery<Partial<IOrder>> = { customer: userId }
 
-        const user = await User.findById(userId)
-            .populate({
-                path: 'orders',
-                populate: [
-                    {
-                        path: 'products',
-                    },
-                    {
-                        path: 'customer',
-                    },
-                ],
-            })
-            .orFail(
-                () =>
-                    new NotFoundError(
-                        'Пользователь по заданному id отсутствует в базе'
-                    )
-            )
-
-        let orders = user.orders as unknown as IOrder[]
-
-        if (search) {
+        // Безопасный поиск
+        if (search && typeof search === 'string') {
             // Защита от ReDoS
-            const safeSearch = escapeStringRegexp(search as string)
+            const safeSearch = escapeStringRegexp(search)
             if (safeSearch.length > 100) {
                 return next(new BadRequestError('Слишком длинный поисковый запрос'))
             }
-            const searchRegex = new RegExp(safeSearch, 'i')
+            
             const searchNumber = Number(search)
-            const products = await Product.find({ title: searchRegex })
-            const productIds = products.map((product) => product._id)
-
-            orders = orders.filter((order) => {
-                const matchesProductTitle = order.products.some((product) =>
-                    productIds.some((id) => id.equals(product._id))
-                )
-                const matchesOrderNumber =
-                    !Number.isNaN(searchNumber) &&
-                    order.orderNumber === searchNumber
-
-                return matchesOrderNumber || matchesProductTitle
-            })
+            if (!isNaN(searchNumber) && searchNumber > 0) {
+                filters.orderNumber = searchNumber
+            }
         }
 
-        const totalOrders = orders.length
-        const totalPages = Math.ceil(totalOrders / limitNum)
+        const orders = await Order.find(filters)
+            .populate([
+                {
+                    path: 'products',
+                    select: 'title price image',
+                },
+                {
+                    path: 'customer',
+                    select: 'name email',
+                    match: { _id: userId }
+                },
+            ])
+            .sort({ createdAt: -1 })
+            .skip((pageNum - 1) * limitNum)
+            .limit(limitNum)
+            .select('-__v')
+            .lean();
 
-        orders = orders.slice(options.skip, options.skip + options.limit)
+        const totalOrders = await Order.countDocuments(filters)
+        const totalPages = Math.ceil(totalOrders / limitNum)
 
         return res.send({
             orders,
@@ -278,13 +240,25 @@ export const getOrderByNumber = async (
         const order = await Order.findOne({
             orderNumber: orderNumber,
         })
-            .populate(['customer', 'products'])
+            .populate([
+                {
+                    path: 'customer',
+                    select: 'name email phone',
+                },
+                {
+                    path: 'products',
+                    select: 'title price image description',
+                },
+            ])
+            .select('-__v')
             .orFail(
                 () =>
                     new NotFoundError(
                         'Заказ по заданному id отсутствует в базе'
                     )
             )
+            .lean();
+            
         return res.status(200).json(order)
     } catch (error) {
         if (error instanceof MongooseError.CastError) {
@@ -309,20 +283,27 @@ export const getOrderCurrentUserByNumber = async (
         
         const order = await Order.findOne({
             orderNumber: orderNumber,
+            customer: userId
         })
-            .populate(['customer', 'products'])
+            .populate([
+                {
+                    path: 'customer',
+                    select: 'name email phone',
+                },
+                {
+                    path: 'products',
+                    select: 'title price image description',
+                },
+            ])
+            .select('-__v')
             .orFail(
                 () =>
                     new NotFoundError(
                         'Заказ по заданному id отсутствует в базе'
                     )
             )
-        if (!order.customer._id.equals(userId)) {
-            // Для безопасности всегда возвращаем 404
-            return next(
-                new NotFoundError('Заказ по заданному id отсутствует в базе')
-            )
-        }
+            .lean();
+            
         return res.status(200).json(order)
     } catch (error) {
         if (error instanceof MongooseError.CastError) {
@@ -354,9 +335,10 @@ export const createOrder = async (
             throw new BadRequestError('Некорректный email')
         }
 
-        // Валидация телефона
-        const phoneRegex = /^\+?[1-9]\d{1,14}$/
-        if (!phoneRegex.test(phone.replace(/\s/g, ''))) {
+        // Валидация телефона - упрощаем
+        const phoneRegex = /^[\d\s\-\+\(\)]{10,20}$/
+        const cleanedPhone = phone.replace(/\s/g, '')
+        if (!phoneRegex.test(phone) || cleanedPhone.length < 10) {
             throw new BadRequestError('Некорректный номер телефона')
         }
 
@@ -366,36 +348,66 @@ export const createOrder = async (
         }
 
         // Получаем товары по одному ID для безопасности
-        const productIds = items.map(id => new Types.ObjectId(id))
-        const products = await Product.find({ _id: { $in: productIds } })
+        const productIds = items.map(id => {
+            try {
+                return new Types.ObjectId(id)
+            } catch {
+                throw new BadRequestError(`Некорректный ID товара: ${id}`)
+            }
+        })
+        
+        const products = await Product.find({ 
+            _id: { $in: productIds },
+            price: { $ne: null, $gt: 0 }
+        })
 
         // Проверяем, что все товары найдены
         if (products.length !== items.length) {
-            throw new BadRequestError('Некоторые товары не найдены')
+            throw new BadRequestError('Некоторые товары не найдены или не доступны для заказа')
         }
 
         products.forEach((product) => {
-            if (product.price === null) {
-                throw new BadRequestError(`Товар "${product.title}" не продается`)
-            }
             basket.push(product)
         })
         
         // Всегда рассчитываем сумму на сервере
         const total = basket.reduce((a, c) => a + c.price, 0)
 
+        // Санитизация комментария - экранируем HTML
+        const sanitizedComment = comment ? 
+            comment.substring(0, 500)
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#x27;')
+                .replace(/\//g, '&#x2F;') : '';
+
         const newOrder = new Order({
             totalAmount: total,
             products: items,
             payment,
-            phone,
+            phone: cleanedPhone,
             email,
-            comment: comment ? comment.substring(0, 500) : '', // Ограничение длины комментария
+            comment: sanitizedComment,
             customer: userId,
             deliveryAddress: address.substring(0, 200), // Ограничение длины адреса
         })
-        const populateOrder = await newOrder.populate(['customer', 'products'])
-        await populateOrder.save()
+        
+        await newOrder.save()
+
+        const populateOrder = await Order.findById(newOrder._id)
+            .populate([
+                {
+                    path: 'customer',
+                    select: 'name email',
+                },
+                {
+                    path: 'products',
+                    select: 'title price',
+                },
+            ])
+            .select('-__v')
+            .lean();
 
         return res.status(200).json(populateOrder)
     } catch (error) {
@@ -432,13 +444,25 @@ export const updateOrder = async (
             { status },
             { new: true, runValidators: true }
         )
+            .populate([
+                {
+                    path: 'customer',
+                    select: 'name email',
+                },
+                {
+                    path: 'products',
+                    select: 'title price',
+                },
+            ])
+            .select('-__v')
             .orFail(
                 () =>
                     new NotFoundError(
                         'Заказ по заданному id отсутствует в базе'
                     )
             )
-            .populate(['customer', 'products'])
+            .lean();
+            
         return res.status(200).json(updatedOrder)
     } catch (error) {
         if (error instanceof MongooseError.ValidationError) {
@@ -464,13 +488,25 @@ export const deleteOrder = async (
         }
         
         const deletedOrder = await Order.findByIdAndDelete(req.params.id)
+            .populate([
+                {
+                    path: 'customer',
+                    select: 'name email',
+                },
+                {
+                    path: 'products',
+                    select: 'title price',
+                },
+            ])
+            .select('-__v')
             .orFail(
                 () =>
                     new NotFoundError(
                         'Заказ по заданному id отсутствует в базе'
                     )
             )
-            .populate(['customer', 'products'])
+            .lean();
+            
         return res.status(200).json(deletedOrder)
     } catch (error) {
         if (error instanceof MongooseError.CastError) {

@@ -31,12 +31,24 @@ export const uploadFile = async (
         
         // Ограничение размера файла (5MB)
         const maxFileSize = 5 * 1024 * 1024 // 5MB
+        const minFileSize = 2 * 1024 // 2KB - минимальный размер
+        
+        if (req.file.size < minFileSize) {
+            return next(new BadRequestError('Файл слишком маленький. Минимальный размер: 2KB'))
+        }
+        
         if (req.file.size > maxFileSize) {
             return next(new BadRequestError('Файл слишком большой. Максимальный размер: 5MB'))
         }
         
-        // Безопасное имя файла (убираем путь, если он есть)
-        const safeFileName = req.file.filename;
+        // Безопасное имя файла - используем только имя файла, без пути
+        const safeFileName = path.basename(req.file.filename);
+        
+        // Убедимся, что имя файла безопасно (только буквы, цифры, точки, дефисы)
+        const safeNameRegex = /^[a-zA-Z0-9\-\.]+$/
+        if (!safeNameRegex.test(safeFileName)) {
+            return next(new BadRequestError('Недопустимое имя файла'))
+        }
         
         const fileName = process.env.UPLOAD_PATH
             ? `/${process.env.UPLOAD_PATH}/${safeFileName}`
@@ -45,6 +57,8 @@ export const uploadFile = async (
         return res.status(constants.HTTP_STATUS_CREATED).send({
             fileName,
             originalName: path.basename(req.file.originalname), // Только для информации
+            size: req.file.size,
+            mimetype: fileMimeType,
         })
     } catch (error) {
         return next(error)
