@@ -52,6 +52,10 @@ const csrfProtection = csurf({
   }
 })
 
+app.get('/api/csrf-token', (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
+});
+
 // Настройка CORS с ограничениями
 const corsOptions = {
   origin: process.env.ORIGIN_ALLOW || 'http://localhost:5173',
@@ -78,10 +82,16 @@ app.options('*', cors(corsOptions))
 
 // CSRF middleware для всех POST, PUT, DELETE запросов
 app.use((req, res, next) => {
+  // Исключаем auth endpoints из CSRF защиты
+  if (req.path.startsWith('/auth/')) {
+    return next();
+  }
+  
+  // Для остальных POST/PUT/DELETE применяем CSRF
   if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
-    csrfProtection(req, res, next)
+    csrfProtection(req, res, next);
   } else {
-    next()
+    next();
   }
 })
 
