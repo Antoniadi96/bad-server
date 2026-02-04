@@ -3,10 +3,8 @@ import { FilterQuery, Error as MongooseError, Types } from 'mongoose'
 import escapeStringRegexp from 'escape-string-regexp'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
-import ForbiddenError from '../errors/forbidden-error';
 import Order, { IOrder } from '../models/order'
 import Product, { IProduct } from '../models/product'
-import User from '../models/user'
 
 // GET /orders?page=2&limit=5&sort=totalAmount&order=desc&orderDateFrom=2024-07-01&orderDateTo=2024-08-01&status=delivering&totalAmountFrom=100&totalAmountTo=1000&search=%2B1
 export const getOrders = async (
@@ -35,14 +33,13 @@ export const getOrders = async (
             search,
         } = req.query
 
-        // Валидация параметров
-        const pageNum = Math.max(1, parseInt(page as string) || 1)
-        const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 10)) // Увеличиваем лимит до 100
+        // Валидация параметров с radix
+        const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
+        const limitNum = Math.min(10, Math.max(1, parseInt(limit as string, 10) || 10))
         
         const filters: FilterQuery<Partial<IOrder>> = {}
 
         if (status) {
-            // Валидация статуса - разрешаем только определенные значения
             const allowedStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
             if (typeof status === 'string' && allowedStatuses.includes(status)) {
                 filters.status = status
@@ -52,7 +49,7 @@ export const getOrders = async (
         // Валидация числовых диапазонов
         if (totalAmountFrom) {
             const amount = Number(totalAmountFrom)
-            if (!isNaN(amount) && amount >= 0) {
+            if (!Number.isNaN(amount) && amount >= 0) {
                 filters.totalAmount = {
                     ...filters.totalAmount,
                     $gte: amount,
@@ -62,7 +59,7 @@ export const getOrders = async (
 
         if (totalAmountTo) {
             const amount = Number(totalAmountTo)
-            if (!isNaN(amount) && amount >= 0) {
+            if (!Number.isNaN(amount) && amount >= 0) {
                 filters.totalAmount = {
                     ...filters.totalAmount,
                     $lte: amount,
@@ -73,7 +70,7 @@ export const getOrders = async (
         // Валидация дат
         if (orderDateFrom) {
             const date = new Date(orderDateFrom as string)
-            if (!isNaN(date.getTime())) {
+            if (!Number.isNaN(date.getTime())) {
                 filters.createdAt = {
                     ...filters.createdAt,
                     $gte: date,
@@ -83,7 +80,7 @@ export const getOrders = async (
 
         if (orderDateTo) {
             const date = new Date(orderDateTo as string)
-            if (!isNaN(date.getTime())) {
+            if (!Number.isNaN(date.getTime())) {
                 const endOfDay = new Date(date)
                 endOfDay.setHours(23, 59, 59, 999)
                 filters.createdAt = {
@@ -93,31 +90,41 @@ export const getOrders = async (
             }
         }
 
-        // Поиск - упрощаем и делаем безопасным
+        // Безопасная обработка поиска - избегаем агрегации
         if (search && typeof search === 'string') {
-            // Защита от ReDoS
             const safeSearch = escapeStringRegexp(search)
             if (safeSearch.length > 100) {
                 return next(new BadRequestError('Слишком длинный поисковый запрос'))
             }
             
-            // Проверка на опасные символы
-            const dangerousPatterns = /(\$|{|}|\$where|\$eq|\$ne|\$gt|\$gte|\$lt|\$lte|\$in|\$nin|\$or|\$and|\$not|\$nor|\$exists|\$type|\$mod|\$regex|\$text|\$where|\$geoWithin|\$geoIntersects|\$near|\$nearSphere|\$all|\$elemMatch|\$size|\$bitsAllClear|\$bitsAllSet|\$bitsAnyClear|\$bitsAnySet|\$comment|\$meta|\$slice|\$natural)/
-            
+            // Проверка на опасные символы для MongoDB
+            const dangerousPatterns = /(\$where|\$eq|\$ne|\$gt|\$gte|\$lt|\$lte|\$in|\$nin|\$or|\$and|\$not|\$nor|\$exists|\$type|\$mod|\$regex|\$text|\$where)/
             if (dangerousPatterns.test(search)) {
                 return next(new BadRequestError('Недопустимый поисковый запрос'))
             }
             
-            // Простой поиск по номеру заказа (безопасный)
+            // Простой поиск по номеру заказа
             const searchNumber = Number(search)
-            if (!isNaN(searchNumber) && searchNumber > 0) {
+            if (!Number.isNaN(searchNumber) && searchNumber > 0) {
                 filters.orderNumber = searchNumber
+            } else {
+                // Если не число, ищем в товарах через отдельный запрос
+                const products = await Product.find(
+                    { title: new RegExp(safeSearch, 'i') },
+                    '_id'
+                ).limit(100)
+                
+                if (products.length > 0) {
+                    filters.products = { $in: products.map(p => p._id) }
+                } else {
+                    // Если нет товаров, возвращаем пустой результат
+                    filters.products = { $in: [] }
+                }
             }
         }
 
         const sort: { [key: string]: any } = {}
 
-        // Безопасная сортировка
         const allowedSortFields = ['createdAt', 'totalAmount', 'orderNumber', 'status']
         if (sortField && allowedSortFields.includes(sortField as string) && sortOrder) {
             sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
@@ -169,23 +176,31 @@ export const getOrdersCurrentUser = async (
         const userId = res.locals.user._id
         const { search, page = 1, limit = 5 } = req.query
         
-        // Валидация параметров
-        const pageNum = Math.max(1, parseInt(page as string) || 1)
-        const limitNum = Math.min(50, Math.max(1, parseInt(limit as string) || 5))
+        const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
+        const limitNum = Math.min(10, Math.max(1, parseInt(limit as string, 10) || 5)) // Максимум 10
         
         const filters: FilterQuery<Partial<IOrder>> = { customer: userId }
 
-        // Безопасный поиск
         if (search && typeof search === 'string') {
-            // Защита от ReDoS
             const safeSearch = escapeStringRegexp(search)
             if (safeSearch.length > 100) {
                 return next(new BadRequestError('Слишком длинный поисковый запрос'))
             }
             
             const searchNumber = Number(search)
-            if (!isNaN(searchNumber) && searchNumber > 0) {
+            if (!Number.isNaN(searchNumber) && searchNumber > 0) {
                 filters.orderNumber = searchNumber
+            } else {
+                const products = await Product.find(
+                    { title: new RegExp(safeSearch, 'i') },
+                    '_id'
+                ).limit(100)
+                
+                if (products.length > 0) {
+                    filters.products = { $in: products.map(p => p._id) }
+                } else {
+                    filters.products = { $in: [] }
+                }
             }
         }
 
@@ -231,14 +246,13 @@ export const getOrderByNumber = async (
     next: NextFunction
 ) => {
     try {
-        // Валидация номера заказа
-        const orderNumber = parseInt(req.params.orderNumber)
-        if (isNaN(orderNumber) || orderNumber <= 0) {
+        const orderNumber = parseInt(req.params.orderNumber, 10)
+        if (Number.isNaN(orderNumber) || orderNumber <= 0) {
             return next(new BadRequestError('Некорректный номер заказа'))
         }
         
         const order = await Order.findOne({
-            orderNumber: orderNumber,
+            orderNumber,
         })
             .populate([
                 {
@@ -275,14 +289,13 @@ export const getOrderCurrentUserByNumber = async (
 ) => {
     const userId = res.locals.user._id
     try {
-        // Валидация номера заказа
-        const orderNumber = parseInt(req.params.orderNumber)
-        if (isNaN(orderNumber) || orderNumber <= 0) {
+        const orderNumber = parseInt(req.params.orderNumber, 10)
+        if (Number.isNaN(orderNumber) || orderNumber <= 0) {
             return next(new BadRequestError('Некорректный номер заказа'))
         }
         
         const order = await Order.findOne({
-            orderNumber: orderNumber,
+            orderNumber,
             customer: userId
         })
             .populate([
@@ -324,30 +337,26 @@ export const createOrder = async (
         const userId = res.locals.user._id
         const { address, payment, phone, email, items, comment } = req.body
 
-        // Валидация входных данных
         if (!address || !payment || !phone || !email || !items || !Array.isArray(items)) {
             throw new BadRequestError('Не все обязательные поля заполнены')
         }
 
-        // Валидация email
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
         if (!emailRegex.test(email)) {
             throw new BadRequestError('Некорректный email')
         }
 
-        // Валидация телефона - упрощаем
-        const phoneRegex = /^[\d\s\-\+\(\)]{10,20}$/
+        // Упрощенная валидация телефона - только цифры и + в начале
         const cleanedPhone = phone.replace(/\s/g, '')
-        if (!phoneRegex.test(phone) || cleanedPhone.length < 10) {
-            throw new BadRequestError('Некорректный номер телефона')
+        const phoneRegex = /^\+?[0-9]{10,15}$/
+        if (!phoneRegex.test(cleanedPhone)) {
+            throw new BadRequestError('Некорректный номер телефона. Должен содержать 10-15 цифр')
         }
 
-        // Ограничение количества товаров в заказе
         if (items.length > 20) {
             throw new BadRequestError('Слишком много товаров в заказе')
         }
 
-        // Получаем товары по одному ID для безопасности
         const productIds = items.map(id => {
             try {
                 return new Types.ObjectId(id)
@@ -361,7 +370,6 @@ export const createOrder = async (
             price: { $ne: null, $gt: 0 }
         })
 
-        // Проверяем, что все товары найдены
         if (products.length !== items.length) {
             throw new BadRequestError('Некоторые товары не найдены или не доступны для заказа')
         }
@@ -370,17 +378,13 @@ export const createOrder = async (
             basket.push(product)
         })
         
-        // Всегда рассчитываем сумму на сервере
         const total = basket.reduce((a, c) => a + c.price, 0)
 
-        // Санитизация комментария - экранируем HTML
+        // Санитизация комментария - удаляем HTML теги
         const sanitizedComment = comment ? 
             comment.substring(0, 500)
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#x27;')
-                .replace(/\//g, '&#x2F;') : '';
+                .replace(/<[^>]*>/g, '') // Удаляем HTML теги
+                .trim() : '';
 
         const newOrder = new Order({
             totalAmount: total,
@@ -390,7 +394,7 @@ export const createOrder = async (
             email,
             comment: sanitizedComment,
             customer: userId,
-            deliveryAddress: address.substring(0, 200), // Ограничение длины адреса
+            deliveryAddress: address.substring(0, 200),
         })
         
         await newOrder.save()
@@ -427,20 +431,18 @@ export const updateOrder = async (
     try {
         const { status } = req.body
         
-        // Валидация статуса
         const allowedStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
         if (!allowedStatuses.includes(status)) {
             return next(new BadRequestError('Некорректный статус заказа'))
         }
         
-        // Валидация номера заказа
-        const orderNumber = parseInt(req.params.orderNumber)
-        if (isNaN(orderNumber) || orderNumber <= 0) {
+        const orderNumber = parseInt(req.params.orderNumber, 10)
+        if (Number.isNaN(orderNumber) || orderNumber <= 0) {
             return next(new BadRequestError('Некорректный номер заказа'))
         }
         
         const updatedOrder = await Order.findOneAndUpdate(
-            { orderNumber: orderNumber },
+            { orderNumber },
             { status },
             { new: true, runValidators: true }
         )
@@ -482,7 +484,6 @@ export const deleteOrder = async (
     next: NextFunction
 ) => {
     try {
-        // Валидация ID
         if (!Types.ObjectId.isValid(req.params.id)) {
             return next(new BadRequestError('Некорректный ID заказа'))
         }

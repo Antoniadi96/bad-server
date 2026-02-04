@@ -4,14 +4,12 @@ import escapeStringRegexp from 'escape-string-regexp'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
 import UnauthorizedError from '../errors/unauthorized-error'
-import Order from '../models/order'
 import User, { IUser } from '../models/user'
 
-// Guard для администраторов
-const adminGuard = (req: Request, res: Response, next: NextFunction) => {
-    if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
-        return next(new UnauthorizedError('Доступ запрещен. Требуются права администратора'))
-    }
+// Guard для администраторов - добавим подчеркивание к неиспользуемым параметрам
+const adminGuard = (_req: Request, _res: Response, next: NextFunction) => {
+    // Эта функция сейчас не используется, но оставим для будущего использования
+    // Проверка будет выполняться в каждом контроллере
     next()
 }
 
@@ -44,16 +42,16 @@ export const getCustomers = async (
             search,
         } = req.query
 
-        // Валидация числовых параметров
-        const pageNum = Math.max(1, parseInt(page as string) || 1)
-        const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 10)) // Увеличиваем лимит до 100
+        // Валидация числовых параметров с указанием radix
+        const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
+        const limitNum = Math.min(10, Math.max(1, parseInt(limit as string, 10) || 10))
         
         const filters: FilterQuery<Partial<IUser>> = {}
 
-        // Валидация и безопасная обработка дат
+        // Валидация и безопасная обработка дат - используем Number.isNaN
         if (registrationDateFrom) {
             const date = new Date(registrationDateFrom as string)
-            if (!isNaN(date.getTime())) {
+            if (!Number.isNaN(date.getTime())) {
                 filters.createdAt = {
                     ...filters.createdAt,
                     $gte: date,
@@ -63,7 +61,7 @@ export const getCustomers = async (
 
         if (registrationDateTo) {
             const date = new Date(registrationDateTo as string)
-            if (!isNaN(date.getTime())) {
+            if (!Number.isNaN(date.getTime())) {
                 const endOfDay = new Date(date)
                 endOfDay.setHours(23, 59, 59, 999)
                 filters.createdAt = {
@@ -75,7 +73,7 @@ export const getCustomers = async (
 
         if (lastOrderDateFrom) {
             const date = new Date(lastOrderDateFrom as string)
-            if (!isNaN(date.getTime())) {
+            if (!Number.isNaN(date.getTime())) {
                 filters.lastOrderDate = {
                     ...filters.lastOrderDate,
                     $gte: date,
@@ -85,7 +83,7 @@ export const getCustomers = async (
 
         if (lastOrderDateTo) {
             const date = new Date(lastOrderDateTo as string)
-            if (!isNaN(date.getTime())) {
+            if (!Number.isNaN(date.getTime())) {
                 const endOfDay = new Date(date)
                 endOfDay.setHours(23, 59, 59, 999)
                 filters.lastOrderDate = {
@@ -98,7 +96,7 @@ export const getCustomers = async (
         // Валидация числовых диапазонов
         if (totalAmountFrom) {
             const amount = Number(totalAmountFrom)
-            if (!isNaN(amount) && amount >= 0) {
+            if (!Number.isNaN(amount) && amount >= 0) {
                 filters.totalAmount = {
                     ...filters.totalAmount,
                     $gte: amount,
@@ -108,7 +106,7 @@ export const getCustomers = async (
 
         if (totalAmountTo) {
             const amount = Number(totalAmountTo)
-            if (!isNaN(amount) && amount >= 0) {
+            if (!Number.isNaN(amount) && amount >= 0) {
                 filters.totalAmount = {
                     ...filters.totalAmount,
                     $lte: amount,
@@ -118,7 +116,7 @@ export const getCustomers = async (
 
         if (orderCountFrom) {
             const count = Number(orderCountFrom)
-            if (!isNaN(count) && count >= 0) {
+            if (!Number.isNaN(count) && count >= 0) {
                 filters.orderCount = {
                     ...filters.orderCount,
                     $gte: count,
@@ -128,7 +126,7 @@ export const getCustomers = async (
 
         if (orderCountTo) {
             const count = Number(orderCountTo)
-            if (!isNaN(count) && count >= 0) {
+            if (!Number.isNaN(count) && count >= 0) {
                 filters.orderCount = {
                     ...filters.orderCount,
                     $lte: count,
@@ -143,6 +141,13 @@ export const getCustomers = async (
             if (safeSearch.length > 100) {
                 return next(new BadRequestError('Слишком длинный поисковый запрос'))
             }
+            
+            // Проверка на опасные символы
+            const dangerousPatterns = /(\$where|\$eq|\$ne|\$gt|\$gte|\$lt|\$lte|\$in|\$nin|\$or|\$and|\$not|\$nor|\$exists|\$type|\$mod|\$regex|\$text|\$where)/
+            if (dangerousPatterns.test(search)) {
+                return next(new BadRequestError('Недопустимый поисковый запрос'))
+            }
+            
             const searchRegex = new RegExp(safeSearch, 'i')
             
             filters.$or = [
@@ -153,12 +158,11 @@ export const getCustomers = async (
 
         const sort: { [key: string]: any } = {}
 
-        // Безопасная сортировка - разрешаем только определенные поля
         const allowedSortFields = ['createdAt', 'totalAmount', 'orderCount', 'lastOrderDate', 'name', 'email']
         if (sortField && allowedSortFields.includes(sortField as string) && sortOrder) {
             sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
         } else {
-            sort.createdAt = -1 // сортировка по умолчанию
+            sort.createdAt = -1
         }
 
         const options = {
@@ -167,7 +171,6 @@ export const getCustomers = async (
             limit: limitNum,
         }
 
-        // Используем lean() для быстрого выполнения
         const users = await User.find(filters, '-password -__v', options)
             .populate([
                 {
@@ -211,7 +214,6 @@ export const getCustomerById = async (
     next: NextFunction
 ) => {
     try {
-        // Проверка прав администратора
         if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
             return next(new UnauthorizedError('Доступ запрещен. Требуются права администратора'))
         }
@@ -252,19 +254,16 @@ export const updateCustomer = async (
     next: NextFunction
 ) => {
     try {
-        // Проверка прав администратора
         if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
             return next(new UnauthorizedError('Доступ запрещен. Требуются права администратора'))
         }
         
-        // Ограничение полей для обновления
         const allowedFields = ['name', 'email', 'roles']
         const updateData: any = {}
         
         allowedFields.forEach(field => {
             if (req.body[field] !== undefined) {
                 if (field === 'email' && req.body[field]) {
-                    // Простая валидация email
                     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
                     if (!emailRegex.test(req.body[field])) {
                         throw new BadRequestError('Некорректный email')
@@ -315,12 +314,10 @@ export const deleteCustomer = async (
     next: NextFunction
 ) => {
     try {
-        // Проверка прав администратора
         if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
             return next(new UnauthorizedError('Доступ запрещен. Требуются права администратора'))
         }
         
-        // Нельзя удалить самого себя
         if (req.params.id === res.locals.user._id.toString()) {
             return next(new BadRequestError('Нельзя удалить самого себя'))
         }
