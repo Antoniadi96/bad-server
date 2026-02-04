@@ -3,6 +3,7 @@ import { NextFunction, Request, Response } from 'express'
 import { constants } from 'http2'
 import jwt, { JwtPayload } from 'jsonwebtoken'
 import { Error as MongooseError } from 'mongoose'
+import validator from 'validator'
 import { REFRESH_TOKEN } from '../config'
 import BadRequestError from '../errors/bad-request-error'
 import ConflictError from '../errors/conflict-error'
@@ -14,6 +15,16 @@ import User from '../models/user'
 const login = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { email, password } = req.body
+        
+        // Валидация входных данных
+        if (!email || !password) {
+            throw new BadRequestError('Email и пароль обязательны')
+        }
+        
+        if (!validator.isEmail(email)) {
+            throw new BadRequestError('Некорректный email')
+        }
+        
         const user = await User.findUserByCredentials(email, password)
         const accessToken = user.generateAccessToken()
         const refreshToken = await user.generateRefreshToken()
@@ -36,7 +47,24 @@ const login = async (req: Request, res: Response, next: NextFunction) => {
 const register = async (req: Request, res: Response, next: NextFunction) => {
     try {
         const { email, password, name } = req.body
-        const newUser = new User({ email, password, name })
+        
+        // Валидация и санитизация
+        if (!email || !password || !name) {
+            throw new BadRequestError('Все поля обязательны')
+        }
+        
+        if (!validator.isEmail(email)) {
+            throw new BadRequestError('Некорректный email')
+        }
+        
+        if (password.length < 6) {
+            throw new BadRequestError('Пароль должен быть не менее 6 символов')
+        }
+        
+        // Санитизация имени
+        const sanitizedName = validator.escape(name).trim()
+        
+        const newUser = new User({ email, password, name: sanitizedName })
         await newUser.save()
         const accessToken = newUser.generateAccessToken()
         const refreshToken = await newUser.generateRefreshToken()
@@ -84,7 +112,6 @@ const getCurrentUser = async (
     }
 }
 
-// Можно лучше: вынести общую логику получения данных из refresh токена
 const deleteRefreshTokenInUser = async (
     req: Request,
     _res: Response,
@@ -117,7 +144,6 @@ const deleteRefreshTokenInUser = async (
     return user
 }
 
-// Реализация удаления токена из базы может отличаться
 // GET  /auth/logout
 const logout = async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -192,7 +218,27 @@ const updateCurrentUser = async (
 ) => {
     const userId = res.locals.user._id
     try {
-        const updatedUser = await User.findByIdAndUpdate(userId, req.body, {
+        // Ограничение полей для обновления (белый список)
+        const allowedFields = ['name', 'email']
+        const updateData: any = {}
+        
+        allowedFields.forEach(field => {
+            if (req.body[field] !== undefined) {
+                // Санитизация строковых полей
+                if (typeof req.body[field] === 'string') {
+                    updateData[field] = validator.escape(req.body[field]).trim()
+                    
+                    // Дополнительная валидация для email
+                    if (field === 'email' && !validator.isEmail(updateData[field])) {
+                        throw new BadRequestError('Некорректный email')
+                    }
+                } else {
+                    updateData[field] = req.body[field]
+                }
+            }
+        })
+
+        const updatedUser = await User.findByIdAndUpdate(userId, updateData, {
             new: true,
         }).orFail(
             () =>
