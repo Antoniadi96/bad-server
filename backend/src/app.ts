@@ -33,11 +33,11 @@ app.use(helmet({
 // Rate limiting для защиты от DDoS
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 минут
-  max: 100, // максимум 100 запросов с одного IP
+  max: 5, // максимум 5 запросов с одного IP (для теста)
   message: 'Слишком много запросов с этого IP, попробуйте позже',
   standardHeaders: true,
   legacyHeaders: false,
-})
+});
 
 app.use(limiter)
 

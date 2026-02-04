@@ -36,7 +36,7 @@ export const uploadFile = async (
         }
         
         // Безопасное имя файла (убираем путь, если он есть)
-        const safeFileName = path.basename(req.file.filename)
+        const safeFileName = req.file.filename;
         
         const fileName = process.env.UPLOAD_PATH
             ? `/${process.env.UPLOAD_PATH}/${safeFileName}`
@@ -44,7 +44,7 @@ export const uploadFile = async (
             
         return res.status(constants.HTTP_STATUS_CREATED).send({
             fileName,
-            originalName: path.basename(req.file.originalname), // Безопасное оригинальное имя
+            originalName: path.basename(req.file.originalname), // Только для информации
         })
     } catch (error) {
         return next(error)

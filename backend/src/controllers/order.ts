@@ -3,6 +3,7 @@ import { FilterQuery, Error as MongooseError, Types } from 'mongoose'
 import escapeStringRegexp from 'escape-string-regexp'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
+import ForbiddenError from '../errors/forbidden-error';
 import Order, { IOrder } from '../models/order'
 import Product, { IProduct } from '../models/product'
 import User from '../models/user'
@@ -14,6 +15,12 @@ export const getOrders = async (
     next: NextFunction
 ) => {
     try {
+        // Проверка прав администратора - возвращаем 403
+        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+            return res.status(403).json({ 
+                error: 'Доступ запрещен. Требуются права администратора' 
+            });
+        }
         const {
             page = 1,
             limit = 10,
@@ -29,7 +36,7 @@ export const getOrders = async (
 
         // Валидация параметров
         const pageNum = Math.max(1, parseInt(page as string) || 1)
-        const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 10))
+        const limitNum = Math.min(10, Math.max(1, parseInt(limit as string) || 10))
         
         const filters: FilterQuery<Partial<IOrder>> = {}
 
@@ -106,28 +113,28 @@ export const getOrders = async (
         ]
 
         if (search) {
-            // Защита от ReDoS
-            const safeSearch = escapeStringRegexp(search as string)
-            if (safeSearch.length > 100) {
-                return next(new BadRequestError('Слишком длинный поисковый запрос'))
-            }
-            const searchRegex = new RegExp(safeSearch, 'i')
-            const searchNumber = Number(search)
+    // Защита от ReDoS
+    const safeSearch = escapeStringRegexp(search as string)
+    if (safeSearch.length > 100) {
+        return next(new BadRequestError('Слишком длинный поисковый запрос'))
+    }
+    
+    // Проверка на опасные символы
+    const dangerousPatterns = /(\$|{|}|\$where|\$eq|\$ne|\$gt|\$gte|\$lt|\$lte|\$in|\$nin|\$or|\$and|\$not|\$nor|\$exists|\$type|\$mod|\$regex|\$text|\$where|\$geoWithin|\$geoIntersects|\$near|\$nearSphere|\$all|\$elemMatch|\$size|\$bitsAllClear|\$bitsAllSet|\$bitsAnyClear|\$bitsAnySet|\$comment|\$meta|\$slice|\$natural)/
+    
+    if (dangerousPatterns.test(search as string)) {
+        return next(new BadRequestError('Недопустимый поисковый запрос'))
+    }
+    
+    const searchRegex = new RegExp(safeSearch, 'i')
+    const searchNumber = Number(search)
 
-            const searchConditions: any[] = [{ 'products.title': searchRegex }]
+    const searchConditions: any[] = [{ 'products.title': searchRegex }]
 
-            if (!Number.isNaN(searchNumber)) {
-                searchConditions.push({ orderNumber: searchNumber })
-            }
-
-            aggregatePipeline.push({
-                $match: {
-                    $or: searchConditions,
-                },
-            })
-
-            filters.$or = searchConditions
-        }
+    if (!Number.isNaN(searchNumber)) {
+        searchConditions.push({ orderNumber: searchNumber })
+    }
+}
 
         const sort: { [key: string]: any } = {}
 

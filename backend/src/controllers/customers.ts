@@ -22,9 +22,10 @@ export const getCustomers = async (
     next: NextFunction
 ) => {
     try {
-        // Проверка прав администратора
-        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
-            return next(new UnauthorizedError('Доступ запрещен. Требуются права администратора'))
+         if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+            return res.status(403).json({ 
+                error: 'Доступ запрещен. Требуются права администратора' 
+            });
         }
         
         const {
@@ -45,7 +46,7 @@ export const getCustomers = async (
 
         // Валидация числовых параметров
         const pageNum = Math.max(1, parseInt(page as string) || 1)
-        const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 10)) // Ограничение limit
+        const limitNum = Math.min(10, Math.max(1, parseInt(limit as string) || 10)) // Ограничение limit
         
         const filters: FilterQuery<Partial<IUser>> = {}
 
