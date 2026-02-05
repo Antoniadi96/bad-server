@@ -306,6 +306,11 @@ export const createOrder = async (
             throw new BadRequestError('Некорректный номер телефона. Должен содержать 10-15 цифр')
         }
 
+        // ДОБАВЛЕНА ПРОВЕРКА: максимальная длина телефона до очистки
+        if (phone.length > 30) {
+            throw new BadRequestError('Номер телефона слишком длинный')
+        }
+
         if (items.length > 20) {
             throw new BadRequestError('Слишком много товаров в заказе')
         }

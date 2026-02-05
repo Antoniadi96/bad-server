@@ -47,10 +47,14 @@ const orderSchema: Schema = new Schema(
             required: true,
         },
         customer: { type: Types.ObjectId, ref: 'user' },
-        deliveryAddress: { type: String },
+        deliveryAddress: { 
+            type: String,
+            maxlength: [200, 'Адрес не должен превышать 200 символов']
+        },
         email: {
             type: String,
             required: [true, 'Поле "email" должно быть заполнено'],
+            maxlength: [100, 'Email не должен превышать 100 символов'],
             validate: {
                 validator: (v: string) => validator.isEmail(v),
                 message: 'Поле "email" должно быть валидным email-адресом',
@@ -59,6 +63,7 @@ const orderSchema: Schema = new Schema(
         phone: {
             type: String,
             required: [true, 'Поле "phone" должно быть заполнено'],
+            maxlength: [30, 'Телефон не должен превышать 30 символов'],
             validate: {
                 validator: (v: string) => phoneRegExp.test(v),
                 message: 'Поле "phone" должно быть валидным телефоном.',
@@ -67,6 +72,7 @@ const orderSchema: Schema = new Schema(
         comment: {
             type: String,
             default: '',
+            maxlength: [500, 'Комментарий не должен превышать 500 символов']
         },
     },
     { versionKey: false, timestamps: true }
