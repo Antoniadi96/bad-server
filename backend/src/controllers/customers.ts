@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery } from 'mongoose'
+import escapeStringRegexp from 'escape-string-regexp'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
 import UnauthorizedError from '../errors/unauthorized-error'
@@ -23,11 +24,6 @@ export const getCustomers = async (
             });
         }
         
-        // ЗАПРЕЩАЕМ поиск для безопасности
-        if (req.query.search) {
-            return next(new BadRequestError('Поиск пользователей временно отключен'))
-        }
-        
         const {
             page = 1,
             limit = 10,
@@ -41,8 +37,10 @@ export const getCustomers = async (
             totalAmountTo,
             orderCountFrom,
             orderCountTo,
+            search,
         } = req.query
 
+        // ВАЖНО: Нормализация лимита - максимум 10
         const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
         const limitNum = Math.min(10, Math.max(1, parseInt(limit as string, 10) || 10))
         
@@ -106,6 +104,28 @@ export const getCustomers = async (
             if (!Number.isNaN(count) && count >= 0) {
                 filters.orderCount = { $lte: count }
             }
+        }
+
+        // ВАЖНО: Разрешаем поиск, но с экранированием
+        if (search && typeof search === 'string') {
+            const safeSearch = escapeStringRegexp(search)
+            if (safeSearch.length > 100) {
+                return next(new BadRequestError('Слишком длинный поисковый запрос'))
+            }
+            
+            // Проверка на опасные MongoDB операторы в поиске
+            const dangerousPatterns = /(\$where|\$expr|\$function|\$accumulator|\$addFields|\$bucket|\$bucketAuto|\$changeStream|\$collStats|\$count|\$currentOp|\$densify|\$documents|\$facet|\$fill|\$geoNear|\$graphLookup|\$group|\$indexStats|\$limit|\$listLocalSessions|\$listSessions|\$lookup|\$match|\$merge|\$out|\$planCacheStats|\$project|\$redact|\$replaceRoot|\$replaceWith|\$sample|\$search|\$set|\$setWindowFields|\$skip|\$sort|\$sortByCount|\$unionWith|\$unset|\$unwind)/
+            
+            if (dangerousPatterns.test(search)) {
+                return next(new BadRequestError('Недопустимый поисковый запрос'))
+            }
+            
+            // Безопасный поиск по имени и email
+            const searchRegex = new RegExp(safeSearch, 'i')
+            filters.$or = [
+                { name: searchRegex },
+                { email: searchRegex },
+            ]
         }
 
         const sort: { [key: string]: any } = {}
@@ -186,7 +206,7 @@ export const getCustomerById = async (
                     },
                 },
             ])
-            .lean();
+            .lean()
             
         if (!user) {
             return next(new NotFoundError('Пользователь по заданному id отсутствует в базе'))
@@ -250,7 +270,7 @@ export const updateCustomer = async (
                     select: 'orderNumber status totalAmount createdAt',
                 },
             ])
-            .lean();
+            .lean()
             
         res.status(200).json(updatedUser)
     } catch (error) {
@@ -281,7 +301,7 @@ export const deleteCustomer = async (
                         'Пользователь по заданному id отсутствует в базе'
                     )
             )
-            .lean();
+            .lean()
             
         res.status(200).json(deletedUser)
     } catch (error) {

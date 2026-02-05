@@ -1,5 +1,6 @@
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery, Error as MongooseError, Types } from 'mongoose'
+import escapeStringRegexp from 'escape-string-regexp'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
 import Order, { IOrder } from '../models/order'
@@ -17,9 +18,17 @@ export const getOrders = async (
             });
         }
         
-        // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Запрещаем агрегацию при поиске
-        if (req.query.search) {
-            return next(new BadRequestError('Поиск с агрегацией отключен из соображений безопасности'))
+        // Проверка на NoSQL-инъекцию через параметры запроса
+        const queryStr = JSON.stringify(req.query);
+        const dangerousPatterns = [
+            '$expr', '$function', '[$]', '{', '}', 
+            'function', 'eval', 'where', 'body=', 'lang=js'
+        ];
+        
+        if (dangerousPatterns.some(pattern => 
+            queryStr.toLowerCase().includes(pattern.toLowerCase())
+        )) {
+            return next(new BadRequestError('Обнаружены опасные параметры в запросе'));
         }
         
         const {
@@ -32,6 +41,7 @@ export const getOrders = async (
             totalAmountTo,
             orderDateFrom,
             orderDateTo,
+            search,
         } = req.query
 
         const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
@@ -39,9 +49,9 @@ export const getOrders = async (
         
         const filters: FilterQuery<Partial<IOrder>> = {}
 
-        if (status) {
+        if (status && typeof status === 'string') {
             const allowedStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
-            if (typeof status === 'string' && allowedStatuses.includes(status)) {
+            if (allowedStatuses.includes(status)) {
                 filters.status = status
             }
         }
@@ -73,6 +83,19 @@ export const getOrders = async (
                 const endOfDay = new Date(date)
                 endOfDay.setHours(23, 59, 59, 999)
                 filters.createdAt = { $lte: endOfDay }
+            }
+        }
+
+        // Простой поиск без агрегации
+        if (search && typeof search === 'string') {
+            const safeSearch = escapeStringRegexp(search)
+            if (safeSearch.length > 100) {
+                return next(new BadRequestError('Слишком длинный поисковый запрос'))
+            }
+            
+            const searchNumber = Number(search)
+            if (!Number.isNaN(searchNumber) && searchNumber > 0) {
+                filters.orderNumber = searchNumber
             }
         }
 
