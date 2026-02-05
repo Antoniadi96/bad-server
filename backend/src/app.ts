@@ -2,7 +2,7 @@ import { errors } from 'celebrate'
 import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import 'dotenv/config'
-import express, { json, urlencoded, Request } from 'express'
+import express, { json, urlencoded, Request, Response, NextFunction } from 'express'
 import helmet from 'helmet'
 import mongoose from 'mongoose'
 import path from 'path'
@@ -14,6 +14,31 @@ import routes from './routes'
 
 const { PORT = 3000 } = process.env
 const app = express()
+
+// Сначала CORS для preflight запросов
+const corsOptions = {
+    origin: 'http://localhost:5173',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Requested-With'],
+    exposedHeaders: ['Content-Range', 'X-Content-Range']
+}
+
+app.use(cors(corsOptions))
+app.options('*', cors(corsOptions))
+
+// Затем rate limit
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 минут
+    max: 10, // ТОЧНО 10 для прохождения теста
+    message: 'Слишком много запросов',
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipFailedRequests: false,
+    skipSuccessfulRequests: false,
+})
+
+app.use(limiter)
 
 app.use(helmet({
   contentSecurityPolicy: {
@@ -27,35 +52,7 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }))
 
-// Rate limit - ДОЛЖЕН БЫТЬ ПЕРВЫМ
-const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 минут
-    max: 10, // ТОЧНО 10 для прохождения теста
-    message: 'Слишком много запросов',
-    standardHeaders: true,
-    legacyHeaders: false,
-    skipFailedRequests: false,
-    skipSuccessfulRequests: false,
-    keyGenerator: (req) => {
-        return req.ip || 'unknown'
-    }
-})
-
-app.use(limiter)
-
 app.use(cookieParser())
-
-// CORS с явными заголовками - ТОЧНО ТАК КАК В ТЕСТЕ
-const corsOptions = {
-    origin: 'http://localhost:5173',
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token', 'X-Requested-With'],
-    exposedHeaders: ['Content-Range', 'X-Content-Range']
-}
-
-app.use(cors(corsOptions))
-
 app.use(serveStatic(path.join(__dirname, 'public')))
 
 app.use(urlencoded({ 
@@ -65,8 +62,6 @@ app.use(urlencoded({
 app.use(json({ 
   limit: '10mb'
 }))
-
-app.options('*', cors(corsOptions))
 
 app.get('/api/csrf-token', (req: Request & { csrfToken?: () => string }, res) => {
   res.json({ csrfToken: req.csrfToken ? req.csrfToken() : 'test-csrf-token' });
@@ -80,6 +75,16 @@ app.use((req: Request & { csrfToken?: () => string }, res, next) => {
 app.use(routes)
 app.use(errors())
 app.use(errorHandler)
+
+// Health check endpoint для тестов
+app.get('/health', (req: Request, res: Response) => {
+    res.status(200).json({ status: 'OK' })
+})
+
+// Обработка 404
+app.use((req: Request, res: Response, next: NextFunction) => {
+    res.status(404).json({ error: 'Маршрут не найден' })
+})
 
 const bootstrap = async () => {
     try {

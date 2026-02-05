@@ -21,6 +21,19 @@ export const getOrders = async (
             })
         }
         
+        // Проверка на NoSQL-инъекцию через параметры запроса
+        const queryStr = JSON.stringify(req.query);
+        const dangerousPatterns = [
+            '$expr', '$function', '[$]', '{', '}', 
+            'function', 'eval', 'where', 'body=', 'lang=js'
+        ];
+        
+        if (dangerousPatterns.some(pattern => 
+            queryStr.toLowerCase().includes(pattern.toLowerCase())
+        )) {
+            return next(new BadRequestError('Обнаружены опасные параметры в запросе'));
+        }
+        
         const {
             page = 1,
             limit = 10,

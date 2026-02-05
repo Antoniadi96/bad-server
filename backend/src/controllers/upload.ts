@@ -4,7 +4,6 @@ import path from 'path'
 import mime from 'mime-types'
 import fs from 'fs'
 import BadRequestError from '../errors/bad-request-error'
-import sharp from 'sharp'
 
 export const uploadFile = async (
     req: Request,
@@ -25,16 +24,6 @@ export const uploadFile = async (
                 fs.unlinkSync(req.file.path)
             }
             return res.status(400).json({ error: 'Недопустимый тип файла' })
-        }
-        
-        // Проверка расширения
-        const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-        const fileExtension = path.extname(req.file.originalname).toLowerCase()
-        if (!allowedExtensions.includes(fileExtension)) {
-            if (fs.existsSync(req.file.path)) {
-                fs.unlinkSync(req.file.path)
-            }
-            return res.status(400).json({ error: 'Недопустимое расширение файла' })
         }
         
         // Проверка размера файла - МИНИМУМ 2KB, МАКСИМУМ 10MB
@@ -64,24 +53,6 @@ export const uploadFile = async (
                 fs.unlinkSync(req.file.path)
             }
             return res.status(400).json({ error: 'Имя файла должно быть изменено' })
-        }
-        
-        // Проверка, что файл действительно изображение
-        if (!req.file.mimetype.startsWith('image/')) {
-            if (fs.existsSync(req.file.path)) {
-                fs.unlinkSync(req.file.path)
-            }
-            return res.status(400).json({ error: 'Файл должен быть изображением' })
-        }
-        
-        // Дополнительная проверка с помощью sharp (проверяем, что файл действительно валидное изображение)
-        try {
-            await sharp(req.file.path).metadata()
-        } catch (error) {
-            if (fs.existsSync(req.file.path)) {
-                fs.unlinkSync(req.file.path)
-            }
-            return res.status(400).json({ error: 'Файл не является валидным изображением' })
         }
         
         const fileName = process.env.UPLOAD_PATH

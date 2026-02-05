@@ -6,22 +6,18 @@ import NotFoundError from '../errors/not-found-error'
 import ForbiddenError from '../errors/forbidden-error'
 import User, { IUser } from '../models/user'
 
-// Guard для администраторов
-const adminGuard = (_req: Request, _res: Response, next: NextFunction) => {
-    next()
-}
-
-// Get GET /customers?page=2&limit=5&sort=totalAmount&order=desc&registrationDateFrom=2023-01-01&registrationDateTo=2023-12-31&lastOrderDateFrom=2023-01-01&lastOrderDateTo=2023-12-31&totalAmountFrom=100&totalAmountTo=1000&orderCountFrom=1&orderCountTo=10
 export const getCustomers = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     try {
-        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+        // Проверка роли администратора
+        const user = res.locals.user
+        if (!user || !user.roles || !user.roles.includes('admin')) {
             return res.status(403).json({ 
-                error: 'Доступ запрещен. Требуются права администратора' 
-            });
+                message: 'Доступ запрещен. Требуются права администратора' 
+            })
         }
         
         const {
