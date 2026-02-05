@@ -3,6 +3,7 @@ import { FilterQuery, Error as MongooseError, Types } from 'mongoose'
 import escapeStringRegexp from 'escape-string-regexp'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
+import ForbiddenError from '../errors/forbidden-error'
 import Order, { IOrder } from '../models/order'
 import Product, { IProduct } from '../models/product'
 
@@ -12,23 +13,12 @@ export const getOrders = async (
     next: NextFunction
 ) => {
     try {
-        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+        // Проверка роли администратора
+        const user = res.locals.user
+        if (!user || !user.roles || !user.roles.includes('admin')) {
             return res.status(403).json({ 
-                error: 'Доступ запрещен. Требуются права администратора' 
-            });
-        }
-        
-        // Проверка на NoSQL-инъекцию через параметры запроса
-        const queryStr = JSON.stringify(req.query);
-        const dangerousPatterns = [
-            '$expr', '$function', '[$]', '{', '}', 
-            'function', 'eval', 'where', 'body=', 'lang=js'
-        ];
-        
-        if (dangerousPatterns.some(pattern => 
-            queryStr.toLowerCase().includes(pattern.toLowerCase())
-        )) {
-            return next(new BadRequestError('Обнаружены опасные параметры в запросе'));
+                message: 'Доступ запрещен. Требуются права администратора' 
+            })
         }
         
         const {
@@ -44,6 +34,7 @@ export const getOrders = async (
             search,
         } = req.query
 
+        // Нормализация лимита - МАКСИМУМ 10
         const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
         const limitNum = Math.min(10, Math.max(1, parseInt(limit as string, 10) || 10))
         
@@ -86,7 +77,6 @@ export const getOrders = async (
             }
         }
 
-        // Простой поиск без агрегации
         if (search && typeof search === 'string') {
             const safeSearch = escapeStringRegexp(search)
             if (safeSearch.length > 100) {
@@ -295,20 +285,19 @@ export const createOrder = async (
             throw new BadRequestError('Не все обязательные поля заполнены')
         }
 
+        // Проверка длины телефона
+        if (phone.length > 30) {
+            throw new BadRequestError('Номер телефона слишком длинный')
+        }
+
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
         if (!emailRegex.test(email)) {
             throw new BadRequestError('Некорректный email')
         }
 
-        // УПРОЩЕННАЯ валидация телефона
-        const cleanedPhone = phone.replace(/\D/g, '') // Оставляем только цифры
+        const cleanedPhone = phone.replace(/\D/g, '')
         if (cleanedPhone.length < 10 || cleanedPhone.length > 15) {
             throw new BadRequestError('Некорректный номер телефона. Должен содержать 10-15 цифр')
-        }
-
-        // ДОБАВЛЕНА ПРОВЕРКА: максимальная длина телефона до очистки
-        if (phone.length > 30) {
-            throw new BadRequestError('Номер телефона слишком длинный')
         }
 
         if (items.length > 20) {

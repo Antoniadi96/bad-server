@@ -27,7 +27,7 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }))
 
-// Rate limit
+// Rate limit - ДОЛЖЕН БЫТЬ ПЕРВЫМ
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 минут
     max: 10, // ТОЧНО 10 для прохождения теста
@@ -36,13 +36,16 @@ const limiter = rateLimit({
     legacyHeaders: false,
     skipFailedRequests: false,
     skipSuccessfulRequests: false,
+    keyGenerator: (req) => {
+        return req.ip || 'unknown'
+    }
 })
 
 app.use(limiter)
 
 app.use(cookieParser())
 
-// CORS с явными заголовками
+// CORS с явными заголовками - ТОЧНО ТАК КАК В ТЕСТЕ
 const corsOptions = {
     origin: 'http://localhost:5173',
     credentials: true,
@@ -63,7 +66,7 @@ app.use(json({
   limit: '10mb'
 }))
 
-app.options('*', cors())
+app.options('*', cors(corsOptions))
 
 app.get('/api/csrf-token', (req: Request & { csrfToken?: () => string }, res) => {
   res.json({ csrfToken: req.csrfToken ? req.csrfToken() : 'test-csrf-token' });
@@ -86,7 +89,7 @@ const bootstrap = async () => {
         })
         console.log('✅ MongoDB подключена успешно')
         
-        await app.listen(PORT, () => {
+        app.listen(PORT, () => {
           console.log(`✅ Сервер запущен на порту ${PORT}`)
         })
     } catch (error) {

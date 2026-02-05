@@ -14,15 +14,15 @@ requiredEnvVars.forEach(envVar => {
   }
 })
 
-// Секретные ключи (в production должны быть установлены через переменные окружения)
-const JWT_SECRET = process.env.JWT_SECRET || 'development-secret-key-change-in-production'
-const AUTH_ACCESS_TOKEN_SECRET = process.env.AUTH_ACCESS_TOKEN_SECRET || 'access-token-secret-dev'
-const AUTH_REFRESH_TOKEN_SECRET = process.env.AUTH_REFRESH_TOKEN_SECRET || 'refresh-token-secret-dev'
+// Секретные ключи
+export const JWT_SECRET = process.env.JWT_SECRET || 'development-secret-key-change-in-production'
+const AUTH_ACCESS_TOKEN_SECRET = process.env.AUTH_ACCESS_TOKEN_SECRET || JWT_SECRET
+const AUTH_REFRESH_TOKEN_SECRET = process.env.AUTH_REFRESH_TOKEN_SECRET || JWT_SECRET
 
 // Токены доступа
 export const ACCESS_TOKEN = {
     secret: AUTH_ACCESS_TOKEN_SECRET,
-    expiry: process.env.AUTH_ACCESS_TOKEN_EXPIRY || '15m', // Короткое время жизни
+    expiry: process.env.AUTH_ACCESS_TOKEN_EXPIRY || '15m',
 }
 
 // Refresh токены
@@ -32,9 +32,9 @@ export const REFRESH_TOKEN = {
     cookie: {
         name: 'refreshToken',
         options: {
-            httpOnly: true, // Недоступен через JavaScript
+            httpOnly: true,
             sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
-            secure: process.env.NODE_ENV === 'production', // Только HTTPS в production
+            secure: process.env.NODE_ENV === 'production',
             maxAge: ms(process.env.AUTH_REFRESH_TOKEN_EXPIRY || '7d'),
             path: '/',
             domain: process.env.NODE_ENV === 'production' ? 'yourdomain.com' : undefined,
@@ -50,16 +50,13 @@ export const CSRF_CONFIG = {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
         sameSite: 'strict' as const,
-        maxAge: 3600 // 1 час
+        maxAge: 3600
     }
 }
 
 // Rate limiting настройки
 export const RATE_LIMIT_CONFIG = {
-    windowMs: 15 * 60 * 1000, // 15 минут
-    max: 100, // максимум 100 запросов с одного IP
+    windowMs: 15 * 60 * 1000,
+    max: 100,
     message: 'Слишком много запросов. Попробуйте позже.'
 }
-
-// Экспорт JWT секрета для использования в других местах
-export { JWT_SECRET }

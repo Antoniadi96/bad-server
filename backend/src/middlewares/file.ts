@@ -12,14 +12,10 @@ const storage = multer.diskStorage({
         _file: Express.Multer.File,
         cb: DestinationCallback
     ) => {
+        const tempPath = process.env.UPLOAD_PATH_TEMP || 'temp'
         cb(
             null,
-            join(
-                __dirname,
-                process.env.UPLOAD_PATH_TEMP
-                    ? `../public/${process.env.UPLOAD_PATH_TEMP}`
-                    : '../public'
-            )
+            join(__dirname, `../public/${tempPath}`)
         )
     },
 
@@ -28,7 +24,7 @@ const storage = multer.diskStorage({
         file: Express.Multer.File,
         cb: FileNameCallback
     ) => {
-        // Генерируем уникальное имя, отличающееся от оригинального
+        // Генерируем уникальное имя файла
         const uniqueSuffix = crypto.randomBytes(16).toString('hex')
         const extension = file.originalname.split('.').pop() || 'png'
         cb(null, `${uniqueSuffix}.${extension}`)
@@ -41,6 +37,7 @@ const types = [
     'image/jpeg',
     'image/gif',
     'image/svg+xml',
+    'image/webp'
 ]
 
 const fileFilter = (
@@ -49,10 +46,18 @@ const fileFilter = (
     cb: FileFilterCallback
 ) => {
     if (!types.includes(file.mimetype)) {
+        // Исправлено: передаем null вместо Error
         return cb(null, false)
     }
-
     return cb(null, true)
 }
 
-export default multer({ storage, fileFilter })
+const upload = multer({ 
+    storage, 
+    fileFilter,
+    limits: {
+        fileSize: 10 * 1024 * 1024, // 10MB
+    }
+})
+
+export default upload
