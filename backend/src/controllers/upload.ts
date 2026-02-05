@@ -2,8 +2,9 @@ import { NextFunction, Request, Response } from 'express'
 import { constants } from 'http2'
 import path from 'path'
 import mime from 'mime-types'
-import fs from 'fs'
 import BadRequestError from '../errors/bad-request-error'
+import fs from 'fs'
+import sharp from 'sharp'
 
 export const uploadFile = async (
     req: Request,
@@ -20,6 +21,7 @@ export const uploadFile = async (
         const fileMimeType = mime.lookup(req.file.originalname) || req.file.mimetype
         
         if (!fileMimeType || !allowedMimeTypes.includes(fileMimeType.toString())) {
+            // Удаляем временный файл
             if (fs.existsSync(req.file.path)) {
                 fs.unlinkSync(req.file.path)
             }
@@ -41,7 +43,7 @@ export const uploadFile = async (
             if (fs.existsSync(req.file.path)) {
                 fs.unlinkSync(req.file.path)
             }
-            return res.status(400).json({ error: 'Файл слишком большой. Максимум 10MB' })
+            return res.status(400).json({ error: 'Файл слишком большой. Максимум 5MB' })
         }
         
         // Проверка, что имя файла отличается от оригинального
@@ -55,17 +57,36 @@ export const uploadFile = async (
             return res.status(400).json({ error: 'Имя файла должно быть изменено' })
         }
         
+        // Проверка, что файл действительно изображение
+        if (!req.file.mimetype.startsWith('image/')) {
+            if (fs.existsSync(req.file.path)) {
+                fs.unlinkSync(req.file.path)
+            }
+            return res.status(400).json({ error: 'Файл должен быть изображением' })
+        }
+        
+        // Дополнительная проверка с помощью sharp (проверяем, что файл действительно валидное изображение)
+        try {
+            await sharp(req.file.path).metadata()
+        } catch (error) {
+            if (fs.existsSync(req.file.path)) {
+                fs.unlinkSync(req.file.path)
+            }
+            return res.status(400).json({ error: 'Файл не является валидным изображением' })
+        }
+        
         const fileName = process.env.UPLOAD_PATH
             ? `/${process.env.UPLOAD_PATH}/${safeFileName}`
             : `/${safeFileName}`
             
         return res.status(201).json({
             fileName,
-            originalName,
+            originalName: originalName,
             size: req.file.size,
             mimetype: fileMimeType,
         })
     } catch (error) {
+        // Удаляем файл при любой ошибке
         if (req.file && fs.existsSync(req.file.path)) {
             fs.unlinkSync(req.file.path)
         }

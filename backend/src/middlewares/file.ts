@@ -12,9 +12,10 @@ const storage = multer.diskStorage({
         _file: Express.Multer.File,
         cb: DestinationCallback
     ) => {
-        const tempPath = process.env.UPLOAD_PATH_TEMP || 'temp'
-        const destPath = join(__dirname, `../public/${tempPath}`)
-        cb(null, destPath)
+        cb(
+            null,
+            join(__dirname, '../public/temp')
+        )
     },
 
     filename: (
@@ -22,39 +23,30 @@ const storage = multer.diskStorage({
         file: Express.Multer.File,
         cb: FileNameCallback
     ) => {
-        // Генерируем уникальное имя файла, отличающееся от оригинального
+        // Генерируем уникальное имя файла
         const uniqueSuffix = crypto.randomBytes(16).toString('hex')
         const extension = file.originalname.split('.').pop() || 'png'
         cb(null, `${uniqueSuffix}.${extension}`)
     },
 })
 
-const types = [
-    'image/png',
-    'image/jpg',
-    'image/jpeg',
-    'image/gif',
-    'image/webp'
-]
-
 const fileFilter = (
     _req: Request,
     file: Express.Multer.File,
     cb: FileFilterCallback
 ) => {
-    if (!types.includes(file.mimetype)) {
-        // ВАЖНО: возвращаем null и false для ошибки
-        return cb(null, false)
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true)
+    } else {
+        cb(null, false)
     }
-    return cb(null, true)
 }
 
-const upload = multer({ 
+export default multer({ 
     storage, 
     fileFilter,
     limits: {
         fileSize: 10 * 1024 * 1024 // 10MB
     }
 })
-
-export default upload

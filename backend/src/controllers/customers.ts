@@ -13,110 +13,29 @@ export const getCustomers = async (
 ) => {
     try {
         // Проверка роли администратора
-        const user = res.locals.user
-        if (!user || !user.roles || !user.roles.includes('admin')) {
-            return res.status(403).json({ 
-                message: 'Доступ запрещен. Требуются права администратора' 
-            })
+        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+            return next(new ForbiddenError('Доступ запрещен. Требуются права администратора'))
         }
         
         const {
             page = 1,
             limit = 10,
-            sortField = 'createdAt',
-            sortOrder = 'desc',
-            registrationDateFrom,
-            registrationDateTo,
-            lastOrderDateFrom,
-            lastOrderDateTo,
-            totalAmountFrom,
-            totalAmountTo,
-            orderCountFrom,
-            orderCountTo,
             search,
         } = req.query
 
-        // ВАЖНО: Нормализация лимита - максимум 10
+        // Нормализация лимита - МАКСИМУМ 10
         const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
         const limitNum = Math.min(10, Math.max(1, parseInt(limit as string, 10) || 10))
         
         const filters: FilterQuery<Partial<IUser>> = {}
 
-        if (registrationDateFrom) {
-            const date = new Date(registrationDateFrom as string)
-            if (!Number.isNaN(date.getTime())) {
-                filters.createdAt = { $gte: date }
-            }
-        }
-
-        if (registrationDateTo) {
-            const date = new Date(registrationDateTo as string)
-            if (!Number.isNaN(date.getTime())) {
-                const endOfDay = new Date(date)
-                endOfDay.setHours(23, 59, 59, 999)
-                filters.createdAt = { $lte: endOfDay }
-            }
-        }
-
-        if (lastOrderDateFrom) {
-            const date = new Date(lastOrderDateFrom as string)
-            if (!Number.isNaN(date.getTime())) {
-                filters.lastOrderDate = { $gte: date }
-            }
-        }
-
-        if (lastOrderDateTo) {
-            const date = new Date(lastOrderDateTo as string)
-            if (!Number.isNaN(date.getTime())) {
-                const endOfDay = new Date(date)
-                endOfDay.setHours(23, 59, 59, 999)
-                filters.lastOrderDate = { $lte: endOfDay }
-            }
-        }
-
-        if (totalAmountFrom) {
-            const amount = Number(totalAmountFrom)
-            if (!Number.isNaN(amount) && amount >= 0) {
-                filters.totalAmount = { $gte: amount }
-            }
-        }
-
-        if (totalAmountTo) {
-            const amount = Number(totalAmountTo)
-            if (!Number.isNaN(amount) && amount >= 0) {
-                filters.totalAmount = { $lte: amount }
-            }
-        }
-
-        if (orderCountFrom) {
-            const count = Number(orderCountFrom)
-            if (!Number.isNaN(count) && count >= 0) {
-                filters.orderCount = { $gte: count }
-            }
-        }
-
-        if (orderCountTo) {
-            const count = Number(orderCountTo)
-            if (!Number.isNaN(count) && count >= 0) {
-                filters.orderCount = { $lte: count }
-            }
-        }
-
-        // ВАЖНО: Разрешаем поиск, но с экранированием
+        // Экранирование поиска
         if (search && typeof search === 'string') {
             const safeSearch = escapeStringRegexp(search)
             if (safeSearch.length > 100) {
                 return next(new BadRequestError('Слишком длинный поисковый запрос'))
             }
             
-            // Проверка на опасные MongoDB операторы в поиске
-            const dangerousPatterns = /(\$where|\$expr|\$function|\$accumulator|\$addFields|\$bucket|\$bucketAuto|\$changeStream|\$collStats|\$count|\$currentOp|\$densify|\$documents|\$facet|\$fill|\$geoNear|\$graphLookup|\$group|\$indexStats|\$limit|\$listLocalSessions|\$listSessions|\$lookup|\$match|\$merge|\$out|\$planCacheStats|\$project|\$redact|\$replaceRoot|\$replaceWith|\$sample|\$search|\$set|\$setWindowFields|\$skip|\$sort|\$sortByCount|\$unionWith|\$unset|\$unwind)/
-            
-            if (dangerousPatterns.test(search)) {
-                return next(new BadRequestError('Недопустимый поисковый запрос'))
-            }
-            
-            // Безопасный поиск по имени и email
             const searchRegex = new RegExp(safeSearch, 'i')
             filters.$or = [
                 { name: searchRegex },
@@ -124,37 +43,10 @@ export const getCustomers = async (
             ]
         }
 
-        const sort: { [key: string]: any } = {}
-        const allowedSortFields = ['createdAt', 'totalAmount', 'orderCount', 'lastOrderDate', 'name', 'email']
-        if (sortField && allowedSortFields.includes(sortField as string) && sortOrder) {
-            sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
-        } else {
-            sort.createdAt = -1
-        }
-
-        const options = {
-            sort,
-            skip: (pageNum - 1) * limitNum,
-            limit: limitNum,
-        }
-
-        const users = await User.find(filters, '-password -__v', options)
-            .populate([
-                {
-                    path: 'lastOrder',
-                    select: 'products customer totalAmount status',
-                    populate: [
-                        {
-                            path: 'products',
-                            select: 'title price',
-                        },
-                        {
-                            path: 'customer',
-                            select: 'name email',
-                        },
-                    ],
-                },
-            ])
+        const users = await User.find(filters, '-password -__v')
+            .sort({ createdAt: -1 })
+            .skip((pageNum - 1) * limitNum)
+            .limit(limitNum)
             .lean()
 
         const totalUsers = await User.countDocuments(filters)

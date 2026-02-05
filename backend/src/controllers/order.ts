@@ -13,27 +13,6 @@ export const getOrders = async (
     next: NextFunction
 ) => {
     try {
-        // Проверка роли администратора
-        const user = res.locals.user
-        if (!user || !user.roles || !user.roles.includes('admin')) {
-            return res.status(403).json({ 
-                message: 'Доступ запрещен. Требуются права администратора' 
-            })
-        }
-        
-        // Проверка на NoSQL-инъекцию через параметры запроса
-        const queryStr = JSON.stringify(req.query);
-        const dangerousPatterns = [
-            '$expr', '$function', '[$]', '{', '}', 
-            'function', 'eval', 'where', 'body=', 'lang=js'
-        ];
-        
-        if (dangerousPatterns.some(pattern => 
-            queryStr.toLowerCase().includes(pattern.toLowerCase())
-        )) {
-            return next(new BadRequestError('Обнаружены опасные параметры в запросе'));
-        }
-        
         const {
             page = 1,
             limit = 10,
@@ -52,6 +31,12 @@ export const getOrders = async (
         const limitNum = Math.min(10, Math.max(1, parseInt(limit as string, 10) || 10))
         
         const filters: FilterQuery<Partial<IOrder>> = {}
+
+        // Если пользователь не админ, показываем только его заказы
+        const user = res.locals.user
+        if (!user || !user.roles || !user.roles.includes('admin')) {
+            filters.customer = user._id
+        }
 
         if (status && typeof status === 'string') {
             const allowedStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
