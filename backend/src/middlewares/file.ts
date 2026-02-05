@@ -28,10 +28,10 @@ const storage = multer.diskStorage({
         file: Express.Multer.File,
         cb: FileNameCallback
     ) => {
-        // Генерируем уникальное имя файла
-        const uniqueSuffix = crypto.randomBytes(16).toString('hex');
-        const extension = file.originalname.split('.').pop();
-        cb(null, `${uniqueSuffix}.${extension}`);
+        // Генерируем уникальное имя, отличающееся от оригинального
+        const uniqueSuffix = crypto.randomBytes(16).toString('hex')
+        const extension = file.originalname.split('.').pop() || 'png'
+        cb(null, `${uniqueSuffix}.${extension}`)
     },
 })
 

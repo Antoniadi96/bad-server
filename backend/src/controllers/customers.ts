@@ -3,7 +3,7 @@ import { FilterQuery } from 'mongoose'
 import escapeStringRegexp from 'escape-string-regexp'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
-import UnauthorizedError from '../errors/unauthorized-error'
+import ForbiddenError from '../errors/forbidden-error'
 import User, { IUser } from '../models/user'
 
 // Guard для администраторов
@@ -186,7 +186,7 @@ export const getCustomerById = async (
 ) => {
     try {
         if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
-            return next(new UnauthorizedError('Доступ запрещен. Требуются права администратора'))
+            return next(new ForbiddenError('Доступ запрещен. Требуются права администратора'))
         }
         
         const user = await User.findById(req.params.id)
@@ -226,7 +226,7 @@ export const updateCustomer = async (
 ) => {
     try {
         if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
-            return next(new UnauthorizedError('Доступ запрещен. Требуются права администратора'))
+            return next(new ForbiddenError('Доступ запрещен. Требуются права администратора'))
         }
         
         const allowedFields = ['name', 'email', 'roles']
@@ -286,7 +286,7 @@ export const deleteCustomer = async (
 ) => {
     try {
         if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
-            return next(new UnauthorizedError('Доступ запрещен. Требуются права администратора'))
+            return next(new ForbiddenError('Доступ запрещен. Требуются права администратора'))
         }
         
         if (req.params.id === res.locals.user._id.toString()) {

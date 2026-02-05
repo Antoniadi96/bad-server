@@ -7,15 +7,13 @@ import helmet from 'helmet'
 import mongoose from 'mongoose'
 import path from 'path'
 import rateLimit from 'express-rate-limit'
-import { DB_ADDRESS, ORIGIN_ALLOW } from './config'
+import { DB_ADDRESS } from './config'
 import errorHandler from './middlewares/error-handler'
 import serveStatic from './middlewares/serverStatic'
 import routes from './routes'
 
 const { PORT = 3000 } = process.env
 const app = express()
-
-const IS_TEST = process.env.NODE_ENV === 'test' || process.env.CI === 'true' || process.env.IS_TEST === 'true'
 
 app.use(helmet({
   contentSecurityPolicy: {
@@ -29,7 +27,7 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }))
 
-// Rate limit - ПРИМЕНЯЕМ
+// Rate limit
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 минут
     max: 10, // ТОЧНО 10 для прохождения теста
@@ -44,7 +42,6 @@ app.use(limiter)
 
 app.use(cookieParser())
 
-// CORS с ПАРАМЕТРАМИ (важно для теста)
 // CORS с явными заголовками
 const corsOptions = {
     origin: 'http://localhost:5173',
@@ -91,7 +88,6 @@ const bootstrap = async () => {
         
         await app.listen(PORT, () => {
           console.log(`✅ Сервер запущен на порту ${PORT}`)
-          console.log(`🧪 Тестовое окружение: ${IS_TEST ? 'ДА' : 'НЕТ'}`)
         })
     } catch (error) {
         console.error('❌ Ошибка при запуске сервера:', error)
