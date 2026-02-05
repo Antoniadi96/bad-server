@@ -38,10 +38,18 @@ export const getOrders = async (
             filters.customer = user._id
         }
 
-        if (status && typeof status === 'string') {
+        // ЗАЩИТА ОТ NOSQL ИНЪЕКЦИЙ - СТРОГАЯ ПРОВЕРКА СТАТУСА
+        if (status) {
+            // Разрешаем ТОЛЬКО строковый статус из разрешенного списка
+            if (typeof status !== 'string') {
+                throw new BadRequestError('Некорректный формат статуса')
+            }
+            
             const allowedStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled']
             if (allowedStatuses.includes(status)) {
                 filters.status = status
+            } else {
+                throw new BadRequestError('Некорректный статус заказа')
             }
         }
 
