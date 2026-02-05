@@ -21,9 +21,8 @@ export const getCustomers = async (
 ) => {
     try {
          if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
-            return res.status(403).json({ 
-                error: 'Доступ запрещен. Требуются права администратора' 
-            });
+            // Возвращаем ошибку сразу, без задержки
+            return next(new UnauthorizedError('Доступ запрещен. Требуются права администратора'))
         }
         
         const {

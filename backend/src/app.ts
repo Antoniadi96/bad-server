@@ -31,37 +31,32 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }))
 
-// Rate limiting для защиты от DDoS - ВАЖНО: тест ожидает лимит 10 даже в тестовом окружении!
+// Rate limiting - для теста важно, чтобы он был установлен
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 минут
-  max: 10, // Всегда 10 для прохождения теста
+  max: 10, // Тест проверяет лимит 10
   message: 'Слишком много запросов с этого IP, попробуйте позже',
   standardHeaders: true,
   legacyHeaders: false,
-  skipFailedRequests: false,
-  skipSuccessfulRequests: false,
 })
 
-// Применяем rate-limit ко всем маршрутам, кроме статических
+// Применяем rate-limit ко всем маршрутам
 app.use(limiter)
 
 app.use(cookieParser())
 
-// Настройка CORS - делаем явную конфигурацию
+// Настройка CORS - делаем явную конфигурацию с параметрами
 const corsOptions = {
   origin: function (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
-    // Разрешаем все origins в тестовом окружении или если origin отсутствует
     if (IS_TEST || !origin) {
       return callback(null, true);
     }
     
-    // Разрешаем несколько origins
     const allowedOrigins = ORIGIN_ALLOW ? ORIGIN_ALLOW.split(',') : ['http://localhost:5173'];
     
     if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
       callback(null, true);
     } else {
-      console.warn(`CORS блокирован для origin: ${origin}`);
       callback(new Error('Not allowed by CORS'), false);
     }
   },
@@ -97,7 +92,6 @@ app.get('/api/csrf-token', (req: Request & { csrfToken?: () => string }, res) =>
 
 // Middleware для добавления csrfToken в запросы
 app.use((req: Request & { csrfToken?: () => string }, res, next) => {
-  // Добавляем метод csrfToken для совместимости
   req.csrfToken = () => 'test-csrf-token';
   next();
 })
@@ -108,7 +102,6 @@ app.use(errorHandler)
 
 const bootstrap = async () => {
     try {
-        // Подключение к MongoDB с обработкой ошибок
         await mongoose.connect(DB_ADDRESS, {
           serverSelectionTimeoutMS: 5000,
           socketTimeoutMS: 45000,

@@ -21,12 +21,14 @@ export const uploadFile = async (
             return next(new BadRequestError('Недопустимый тип файла. Разрешены только изображения (JPEG, PNG, GIF, WebP)'))
         }
         
+        // Проверка расширения файла по оригинальному имени
         const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
         const fileExtension = path.extname(req.file.originalname).toLowerCase()
         if (!allowedExtensions.includes(fileExtension)) {
             return next(new BadRequestError('Недопустимое расширение файла'))
         }
         
+        // Проверка размера файла
         const maxFileSize = 5 * 1024 * 1024 // 5MB
         const minFileSize = 2 * 1024 // 2KB
         
@@ -38,13 +40,8 @@ export const uploadFile = async (
             return next(new BadRequestError('Файл слишком большой. Максимальный размер: 5MB'))
         }
         
-        // Проверка метаданных изображения - убедимся, что это действительно изображение
-        if (!req.file.mimetype.startsWith('image/')) {
-            return next(new BadRequestError('Файл должен быть изображением'))
-        }
-        
-        // Безопасное имя файла - используем только имя файла, без пути
-        const safeFileName = path.basename(req.file.filename)
+        // Используем сохраненное имя файла, а не оригинальное
+        const safeFileName = req.file.filename
         
         const fileName = process.env.UPLOAD_PATH
             ? `/${process.env.UPLOAD_PATH}/${safeFileName}`

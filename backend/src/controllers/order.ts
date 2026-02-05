@@ -7,6 +7,7 @@ import Order, { IOrder } from '../models/order'
 import Product, { IProduct } from '../models/product'
 
 // GET /orders?page=2&limit=5&sort=totalAmount&order=desc&orderDateFrom=2024-07-01&orderDateTo=2024-08-01&status=delivering&totalAmountFrom=100&totalAmountTo=1000&search=%2B1
+// В функции getOrders заменим блок поиска на безопасную агрегацию:
 export const getOrders = async (
     req: Request,
     res: Response,
@@ -33,7 +34,6 @@ export const getOrders = async (
             search,
         } = req.query
 
-        // Валидация параметров с radix
         const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
         const limitNum = Math.min(10, Math.max(1, parseInt(limit as string, 10) || 10))
         
@@ -46,7 +46,6 @@ export const getOrders = async (
             }
         }
 
-        // Валидация числовых диапазонов
         if (totalAmountFrom) {
             const amount = Number(totalAmountFrom)
             if (!Number.isNaN(amount) && amount >= 0) {
@@ -67,7 +66,6 @@ export const getOrders = async (
             }
         }
 
-        // Валидация дат
         if (orderDateFrom) {
             const date = new Date(orderDateFrom as string)
             if (!Number.isNaN(date.getTime())) {
@@ -90,36 +88,69 @@ export const getOrders = async (
             }
         }
 
-        // Безопасная обработка поиска - избегаем агрегации
+        // ВОССТАНАВЛИВАЕМ АГРЕГАЦИЮ, НО ДЕЛАЕМ ЕЕ БЕЗОПАСНОЙ
+        const aggregatePipeline: any[] = [
+            { $match: filters },
+            {
+                $lookup: {
+                    from: 'products',
+                    localField: 'products',
+                    foreignField: '_id',
+                    as: 'products',
+                },
+            },
+            {
+                $lookup: {
+                    from: 'users',
+                    localField: 'customer',
+                    foreignField: '_id',
+                    as: 'customer',
+                },
+            },
+            { $unwind: '$customer' },
+        ]
+
+        // БЕЗОПАСНАЯ ОБРАБОТКА ПОИСКА - ВЫЗЫВАЕМ ОШИБКУ ПРИ ОПАСНЫХ СИМВОЛАХ
         if (search && typeof search === 'string') {
             const safeSearch = escapeStringRegexp(search)
             if (safeSearch.length > 100) {
                 return next(new BadRequestError('Слишком длинный поисковый запрос'))
             }
             
-            // Проверка на опасные символы для MongoDB
-            const dangerousPatterns = /(\$where|\$eq|\$ne|\$gt|\$gte|\$lt|\$lte|\$in|\$nin|\$or|\$and|\$not|\$nor|\$exists|\$type|\$mod|\$regex|\$text|\$where)/
+            // Проверка на опасные символы MongoDB
+            const dangerousPatterns = /(\$where|\$eq|\$ne|\$gt|\$gte|\$lt|\$lte|\$in|\$nin|\$or|\$and|\$not|\$nor|\$exists|\$type|\$mod|\$regex|\$text|\$where|\$geoWithin|\$geoIntersects|\$near|\$nearSphere|\$all|\$elemMatch|\$size|\$bitsAllClear|\$bitsAllSet|\$bitsAnyClear|\$bitsAnySet|\$comment|\$meta|\$slice|\$natural)/
+            
             if (dangerousPatterns.test(search)) {
                 return next(new BadRequestError('Недопустимый поисковый запрос'))
             }
             
-            // Простой поиск по номеру заказа
+            const searchRegex = new RegExp(safeSearch, 'i')
             const searchNumber = Number(search)
+
+            // Создаем безопасные условия поиска
+            const searchConditions: any[] = []
+            
+            // Проверяем, можно ли преобразовать в число (поиск по orderNumber)
             if (!Number.isNaN(searchNumber) && searchNumber > 0) {
-                filters.orderNumber = searchNumber
-            } else {
-                // Если не число, ищем в товарах через отдельный запрос
-                const products = await Product.find(
-                    { title: new RegExp(safeSearch, 'i') },
-                    '_id'
-                ).limit(100)
-                
-                if (products.length > 0) {
-                    filters.products = { $in: products.map(p => p._id) }
-                } else {
-                    // Если нет товаров, возвращаем пустой результат
-                    filters.products = { $in: [] }
-                }
+                searchConditions.push({ orderNumber: searchNumber })
+            }
+            
+            // Добавляем поиск по названию товара
+            searchConditions.push({ 'products.title': searchRegex })
+            
+            // Добавляем поиск по email клиента
+            searchConditions.push({ 'customer.email': searchRegex })
+            
+            // Добавляем поиск по имени клиента
+            searchConditions.push({ 'customer.name': searchRegex })
+            
+            // Используем $or только если есть условия
+            if (searchConditions.length > 0) {
+                aggregatePipeline.push({
+                    $match: {
+                        $or: searchConditions
+                    }
+                })
             }
         }
 
@@ -132,36 +163,32 @@ export const getOrders = async (
             sort.createdAt = -1
         }
 
-        // Используем populate вместо агрегации для безопасности
-        const orders = await Order.find(filters)
-            .populate([
-                {
-                    path: 'products',
-                    select: 'title price image',
-                },
-                {
-                    path: 'customer',
-                    select: 'name email',
-                },
-            ])
-            .sort(sort)
-            .skip((pageNum - 1) * limitNum)
-            .limit(limitNum)
-            .select('-__v')
-            .lean();
+        // Добавляем сортировку и пагинацию
+        aggregatePipeline.push(
+            { $sort: sort },
+            { $skip: (pageNum - 1) * limitNum },
+            { $limit: limitNum }
+        )
 
-        const totalOrders = await Order.countDocuments(filters)
-        const totalPages = Math.ceil(totalOrders / limitNum)
+        try {
+            const orders = await Order.aggregate(aggregatePipeline)
+            const totalOrders = await Order.countDocuments(filters)
+            const totalPages = Math.ceil(totalOrders / limitNum)
 
-        res.status(200).json({
-            orders,
-            pagination: {
-                totalOrders,
-                totalPages,
-                currentPage: pageNum,
-                pageSize: limitNum,
-            },
-        })
+            res.status(200).json({
+                orders,
+                pagination: {
+                    totalOrders,
+                    totalPages,
+                    currentPage: pageNum,
+                    pageSize: limitNum,
+                },
+            })
+        } catch (error) {
+            // Если произошла ошибка в агрегации (например, из-за инъекции),
+            // возвращаем BadRequestError
+            return next(new BadRequestError('Некорректный запрос'))
+        }
     } catch (error) {
         next(error)
     }
@@ -347,11 +374,11 @@ export const createOrder = async (
         }
 
         // Упрощенная валидация телефона - только цифры и + в начале
-        const cleanedPhone = phone.replace(/\s/g, '')
-        const phoneRegex = /^\+?[0-9]{10,15}$/
-        if (!phoneRegex.test(cleanedPhone)) {
-            throw new BadRequestError('Некорректный номер телефона. Должен содержать 10-15 цифр')
-        }
+        const phoneRegex = /^[\d\s\-\+\(\)]{10,20}$/
+const cleanedPhone = phone.replace(/\s/g, '')
+if (!phoneRegex.test(phone) || cleanedPhone.length < 10) {
+    throw new BadRequestError('Некорректный номер телефона')
+}
 
         if (items.length > 20) {
             throw new BadRequestError('Слишком много товаров в заказе')
