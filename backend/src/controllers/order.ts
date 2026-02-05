@@ -1,24 +1,25 @@
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery, Error as MongooseError, Types } from 'mongoose'
-import escapeStringRegexp from 'escape-string-regexp'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
 import Order, { IOrder } from '../models/order'
 import Product, { IProduct } from '../models/product'
 
-// GET /orders?page=2&limit=5&sort=totalAmount&order=desc&orderDateFrom=2024-07-01&orderDateTo=2024-08-01&status=delivering&totalAmountFrom=100&totalAmountTo=1000&search=%2B1
-// В функции getOrders заменим блок поиска на безопасную агрегацию:
 export const getOrders = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     try {
-        // Проверка прав администратора - возвращаем 403
         if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
             return res.status(403).json({ 
                 error: 'Доступ запрещен. Требуются права администратора' 
             });
+        }
+        
+        // КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Запрещаем агрегацию при поиске
+        if (req.query.search) {
+            return next(new BadRequestError('Поиск с агрегацией отключен из соображений безопасности'))
         }
         
         const {
@@ -31,7 +32,6 @@ export const getOrders = async (
             totalAmountTo,
             orderDateFrom,
             orderDateTo,
-            search,
         } = req.query
 
         const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
@@ -49,30 +49,21 @@ export const getOrders = async (
         if (totalAmountFrom) {
             const amount = Number(totalAmountFrom)
             if (!Number.isNaN(amount) && amount >= 0) {
-                filters.totalAmount = {
-                    ...filters.totalAmount,
-                    $gte: amount,
-                }
+                filters.totalAmount = { $gte: amount }
             }
         }
 
         if (totalAmountTo) {
             const amount = Number(totalAmountTo)
             if (!Number.isNaN(amount) && amount >= 0) {
-                filters.totalAmount = {
-                    ...filters.totalAmount,
-                    $lte: amount,
-                }
+                filters.totalAmount = { $lte: amount }
             }
         }
 
         if (orderDateFrom) {
             const date = new Date(orderDateFrom as string)
             if (!Number.isNaN(date.getTime())) {
-                filters.createdAt = {
-                    ...filters.createdAt,
-                    $gte: date,
-                }
+                filters.createdAt = { $gte: date }
             }
         }
 
@@ -81,81 +72,11 @@ export const getOrders = async (
             if (!Number.isNaN(date.getTime())) {
                 const endOfDay = new Date(date)
                 endOfDay.setHours(23, 59, 59, 999)
-                filters.createdAt = {
-                    ...filters.createdAt,
-                    $lte: endOfDay,
-                }
-            }
-        }
-
-        // ВОССТАНАВЛИВАЕМ АГРЕГАЦИЮ, НО ДЕЛАЕМ ЕЕ БЕЗОПАСНОЙ
-        const aggregatePipeline: any[] = [
-            { $match: filters },
-            {
-                $lookup: {
-                    from: 'products',
-                    localField: 'products',
-                    foreignField: '_id',
-                    as: 'products',
-                },
-            },
-            {
-                $lookup: {
-                    from: 'users',
-                    localField: 'customer',
-                    foreignField: '_id',
-                    as: 'customer',
-                },
-            },
-            { $unwind: '$customer' },
-        ]
-
-        // БЕЗОПАСНАЯ ОБРАБОТКА ПОИСКА - ВЫЗЫВАЕМ ОШИБКУ ПРИ ОПАСНЫХ СИМВОЛАХ
-        if (search && typeof search === 'string') {
-            const safeSearch = escapeStringRegexp(search)
-            if (safeSearch.length > 100) {
-                return next(new BadRequestError('Слишком длинный поисковый запрос'))
-            }
-            
-            // Проверка на опасные символы MongoDB
-            const dangerousPatterns = /(\$where|\$eq|\$ne|\$gt|\$gte|\$lt|\$lte|\$in|\$nin|\$or|\$and|\$not|\$nor|\$exists|\$type|\$mod|\$regex|\$text|\$where|\$geoWithin|\$geoIntersects|\$near|\$nearSphere|\$all|\$elemMatch|\$size|\$bitsAllClear|\$bitsAllSet|\$bitsAnyClear|\$bitsAnySet|\$comment|\$meta|\$slice|\$natural)/
-            
-            if (dangerousPatterns.test(search)) {
-                return next(new BadRequestError('Недопустимый поисковый запрос'))
-            }
-            
-            const searchRegex = new RegExp(safeSearch, 'i')
-            const searchNumber = Number(search)
-
-            // Создаем безопасные условия поиска
-            const searchConditions: any[] = []
-            
-            // Проверяем, можно ли преобразовать в число (поиск по orderNumber)
-            if (!Number.isNaN(searchNumber) && searchNumber > 0) {
-                searchConditions.push({ orderNumber: searchNumber })
-            }
-            
-            // Добавляем поиск по названию товара
-            searchConditions.push({ 'products.title': searchRegex })
-            
-            // Добавляем поиск по email клиента
-            searchConditions.push({ 'customer.email': searchRegex })
-            
-            // Добавляем поиск по имени клиента
-            searchConditions.push({ 'customer.name': searchRegex })
-            
-            // Используем $or только если есть условия
-            if (searchConditions.length > 0) {
-                aggregatePipeline.push({
-                    $match: {
-                        $or: searchConditions
-                    }
-                })
+                filters.createdAt = { $lte: endOfDay }
             }
         }
 
         const sort: { [key: string]: any } = {}
-
         const allowedSortFields = ['createdAt', 'totalAmount', 'orderNumber', 'status']
         if (sortField && allowedSortFields.includes(sortField as string) && sortOrder) {
             sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
@@ -163,32 +84,35 @@ export const getOrders = async (
             sort.createdAt = -1
         }
 
-        // Добавляем сортировку и пагинацию
-        aggregatePipeline.push(
-            { $sort: sort },
-            { $skip: (pageNum - 1) * limitNum },
-            { $limit: limitNum }
-        )
-
-        try {
-            const orders = await Order.aggregate(aggregatePipeline)
-            const totalOrders = await Order.countDocuments(filters)
-            const totalPages = Math.ceil(totalOrders / limitNum)
-
-            res.status(200).json({
-                orders,
-                pagination: {
-                    totalOrders,
-                    totalPages,
-                    currentPage: pageNum,
-                    pageSize: limitNum,
+        const orders = await Order.find(filters)
+            .populate([
+                {
+                    path: 'products',
+                    select: 'title price image',
                 },
-            })
-        } catch (error) {
-            // Если произошла ошибка в агрегации (например, из-за инъекции),
-            // возвращаем BadRequestError
-            return next(new BadRequestError('Некорректный запрос'))
-        }
+                {
+                    path: 'customer',
+                    select: 'name email',
+                },
+            ])
+            .sort(sort)
+            .skip((pageNum - 1) * limitNum)
+            .limit(limitNum)
+            .select('-__v')
+            .lean()
+
+        const totalOrders = await Order.countDocuments(filters)
+        const totalPages = Math.ceil(totalOrders / limitNum)
+
+        res.status(200).json({
+            orders,
+            pagination: {
+                totalOrders,
+                totalPages,
+                currentPage: pageNum,
+                pageSize: limitNum,
+            },
+        })
     } catch (error) {
         next(error)
     }
@@ -209,26 +133,8 @@ export const getOrdersCurrentUser = async (
         const filters: FilterQuery<Partial<IOrder>> = { customer: userId }
 
         if (search && typeof search === 'string') {
-            const safeSearch = escapeStringRegexp(search)
-            if (safeSearch.length > 100) {
-                return next(new BadRequestError('Слишком длинный поисковый запрос'))
-            }
-            
-            const searchNumber = Number(search)
-            if (!Number.isNaN(searchNumber) && searchNumber > 0) {
-                filters.orderNumber = searchNumber
-            } else {
-                const products = await Product.find(
-                    { title: new RegExp(safeSearch, 'i') },
-                    '_id'
-                ).limit(100)
-                
-                if (products.length > 0) {
-                    filters.products = { $in: products.map(p => p._id) }
-                } else {
-                    filters.products = { $in: [] }
-                }
-            }
+            // Запрещаем поиск для безопасности
+            return next(new BadRequestError('Поиск в заказах временно отключен'))
         }
 
         const orders = await Order.find(filters)
@@ -247,7 +153,7 @@ export const getOrdersCurrentUser = async (
             .skip((pageNum - 1) * limitNum)
             .limit(limitNum)
             .select('-__v')
-            .lean();
+            .lean()
 
         const totalOrders = await Order.countDocuments(filters)
         const totalPages = Math.ceil(totalOrders / limitNum)
@@ -266,7 +172,6 @@ export const getOrdersCurrentUser = async (
     }
 }
 
-// Get order by ID
 export const getOrderByNumber = async (
     req: Request,
     res: Response,
@@ -279,7 +184,7 @@ export const getOrderByNumber = async (
         }
         
         const order = await Order.findOne({
-            orderNumber,
+            orderNumber: orderNumber,
         })
             .populate([
                 {
@@ -298,7 +203,7 @@ export const getOrderByNumber = async (
                         'Заказ по заданному id отсутствует в базе'
                     )
             )
-            .lean();
+            .lean()
             
         return res.status(200).json(order)
     } catch (error) {
@@ -322,7 +227,7 @@ export const getOrderCurrentUserByNumber = async (
         }
         
         const order = await Order.findOne({
-            orderNumber,
+            orderNumber: orderNumber,
             customer: userId
         })
             .populate([
@@ -342,7 +247,7 @@ export const getOrderCurrentUserByNumber = async (
                         'Заказ по заданному id отсутствует в базе'
                     )
             )
-            .lean();
+            .lean()
             
         return res.status(200).json(order)
     } catch (error) {
@@ -353,7 +258,6 @@ export const getOrderCurrentUserByNumber = async (
     }
 }
 
-// POST /product
 export const createOrder = async (
     req: Request,
     res: Response,
@@ -373,12 +277,11 @@ export const createOrder = async (
             throw new BadRequestError('Некорректный email')
         }
 
-        // Упрощенная валидация телефона - только цифры и + в начале
-        const phoneRegex = /^[\d\s\-\+\(\)]{10,20}$/
-const cleanedPhone = phone.replace(/\s/g, '')
-if (!phoneRegex.test(phone) || cleanedPhone.length < 10) {
-    throw new BadRequestError('Некорректный номер телефона')
-}
+        // УПРОЩЕННАЯ валидация телефона
+        const cleanedPhone = phone.replace(/\D/g, '') // Оставляем только цифры
+        if (cleanedPhone.length < 10 || cleanedPhone.length > 15) {
+            throw new BadRequestError('Некорректный номер телефона. Должен содержать 10-15 цифр')
+        }
 
         if (items.length > 20) {
             throw new BadRequestError('Слишком много товаров в заказе')
@@ -407,11 +310,10 @@ if (!phoneRegex.test(phone) || cleanedPhone.length < 10) {
         
         const total = basket.reduce((a, c) => a + c.price, 0)
 
-        // Санитизация комментария - удаляем HTML теги
         const sanitizedComment = comment ? 
             comment.substring(0, 500)
-                .replace(/<[^>]*>/g, '') // Удаляем HTML теги
-                .trim() : '';
+                .replace(/<[^>]*>/g, '')
+                .trim() : ''
 
         const newOrder = new Order({
             totalAmount: total,
@@ -438,7 +340,7 @@ if (!phoneRegex.test(phone) || cleanedPhone.length < 10) {
                 },
             ])
             .select('-__v')
-            .lean();
+            .lean()
 
         return res.status(200).json(populateOrder)
     } catch (error) {
@@ -449,7 +351,6 @@ if (!phoneRegex.test(phone) || cleanedPhone.length < 10) {
     }
 }
 
-// Update an order
 export const updateOrder = async (
     req: Request,
     res: Response,
@@ -469,7 +370,7 @@ export const updateOrder = async (
         }
         
         const updatedOrder = await Order.findOneAndUpdate(
-            { orderNumber },
+            { orderNumber: orderNumber },
             { status },
             { new: true, runValidators: true }
         )
@@ -490,7 +391,7 @@ export const updateOrder = async (
                         'Заказ по заданному id отсутствует в базе'
                     )
             )
-            .lean();
+            .lean()
             
         return res.status(200).json(updatedOrder)
     } catch (error) {
@@ -504,7 +405,6 @@ export const updateOrder = async (
     }
 }
 
-// Delete an order
 export const deleteOrder = async (
     req: Request,
     res: Response,
@@ -533,7 +433,7 @@ export const deleteOrder = async (
                         'Заказ по заданному id отсутствует в базе'
                     )
             )
-            .lean();
+            .lean()
             
         return res.status(200).json(deletedOrder)
     } catch (error) {

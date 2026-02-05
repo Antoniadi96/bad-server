@@ -1,15 +1,12 @@
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery } from 'mongoose'
-import escapeStringRegexp from 'escape-string-regexp'
 import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
 import UnauthorizedError from '../errors/unauthorized-error'
 import User, { IUser } from '../models/user'
 
-// Guard для администраторов - добавим подчеркивание к неиспользуемым параметрам
+// Guard для администраторов
 const adminGuard = (_req: Request, _res: Response, next: NextFunction) => {
-    // Эта функция сейчас не используется, но оставим для будущего использования
-    // Проверка будет выполняться в каждом контроллере
     next()
 }
 
@@ -20,9 +17,15 @@ export const getCustomers = async (
     next: NextFunction
 ) => {
     try {
-         if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
-            // Возвращаем ошибку сразу, без задержки
-            return next(new UnauthorizedError('Доступ запрещен. Требуются права администратора'))
+        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+            return res.status(403).json({ 
+                error: 'Доступ запрещен. Требуются права администратора' 
+            });
+        }
+        
+        // ЗАПРЕЩАЕМ поиск для безопасности
+        if (req.query.search) {
+            return next(new BadRequestError('Поиск пользователей временно отключен'))
         }
         
         const {
@@ -38,23 +41,17 @@ export const getCustomers = async (
             totalAmountTo,
             orderCountFrom,
             orderCountTo,
-            search,
         } = req.query
 
-        // Валидация числовых параметров с указанием radix
         const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
         const limitNum = Math.min(10, Math.max(1, parseInt(limit as string, 10) || 10))
         
         const filters: FilterQuery<Partial<IUser>> = {}
 
-        // Валидация и безопасная обработка дат - используем Number.isNaN
         if (registrationDateFrom) {
             const date = new Date(registrationDateFrom as string)
             if (!Number.isNaN(date.getTime())) {
-                filters.createdAt = {
-                    ...filters.createdAt,
-                    $gte: date,
-                }
+                filters.createdAt = { $gte: date }
             }
         }
 
@@ -63,20 +60,14 @@ export const getCustomers = async (
             if (!Number.isNaN(date.getTime())) {
                 const endOfDay = new Date(date)
                 endOfDay.setHours(23, 59, 59, 999)
-                filters.createdAt = {
-                    ...filters.createdAt,
-                    $lte: endOfDay,
-                }
+                filters.createdAt = { $lte: endOfDay }
             }
         }
 
         if (lastOrderDateFrom) {
             const date = new Date(lastOrderDateFrom as string)
             if (!Number.isNaN(date.getTime())) {
-                filters.lastOrderDate = {
-                    ...filters.lastOrderDate,
-                    $gte: date,
-                }
+                filters.lastOrderDate = { $gte: date }
             }
         }
 
@@ -85,78 +76,39 @@ export const getCustomers = async (
             if (!Number.isNaN(date.getTime())) {
                 const endOfDay = new Date(date)
                 endOfDay.setHours(23, 59, 59, 999)
-                filters.lastOrderDate = {
-                    ...filters.lastOrderDate,
-                    $lte: endOfDay,
-                }
+                filters.lastOrderDate = { $lte: endOfDay }
             }
         }
 
-        // Валидация числовых диапазонов
         if (totalAmountFrom) {
             const amount = Number(totalAmountFrom)
             if (!Number.isNaN(amount) && amount >= 0) {
-                filters.totalAmount = {
-                    ...filters.totalAmount,
-                    $gte: amount,
-                }
+                filters.totalAmount = { $gte: amount }
             }
         }
 
         if (totalAmountTo) {
             const amount = Number(totalAmountTo)
             if (!Number.isNaN(amount) && amount >= 0) {
-                filters.totalAmount = {
-                    ...filters.totalAmount,
-                    $lte: amount,
-                }
+                filters.totalAmount = { $lte: amount }
             }
         }
 
         if (orderCountFrom) {
             const count = Number(orderCountFrom)
             if (!Number.isNaN(count) && count >= 0) {
-                filters.orderCount = {
-                    ...filters.orderCount,
-                    $gte: count,
-                }
+                filters.orderCount = { $gte: count }
             }
         }
 
         if (orderCountTo) {
             const count = Number(orderCountTo)
             if (!Number.isNaN(count) && count >= 0) {
-                filters.orderCount = {
-                    ...filters.orderCount,
-                    $lte: count,
-                }
+                filters.orderCount = { $lte: count }
             }
-        }
-
-        // Защита от ReDoS: экранирование специальных символов в регулярных выражениях
-        if (search && typeof search === 'string') {
-            const safeSearch = escapeStringRegexp(search)
-            // Ограничение длины поискового запроса
-            if (safeSearch.length > 100) {
-                return next(new BadRequestError('Слишком длинный поисковый запрос'))
-            }
-            
-            // Проверка на опасные символы
-            const dangerousPatterns = /(\$where|\$eq|\$ne|\$gt|\$gte|\$lt|\$lte|\$in|\$nin|\$or|\$and|\$not|\$nor|\$exists|\$type|\$mod|\$regex|\$text|\$where)/
-            if (dangerousPatterns.test(search)) {
-                return next(new BadRequestError('Недопустимый поисковый запрос'))
-            }
-            
-            const searchRegex = new RegExp(safeSearch, 'i')
-            
-            filters.$or = [
-                { name: searchRegex },
-                { email: searchRegex },
-            ]
         }
 
         const sort: { [key: string]: any } = {}
-
         const allowedSortFields = ['createdAt', 'totalAmount', 'orderCount', 'lastOrderDate', 'name', 'email']
         if (sortField && allowedSortFields.includes(sortField as string) && sortOrder) {
             sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
@@ -187,7 +139,7 @@ export const getCustomers = async (
                     ],
                 },
             ])
-            .lean();
+            .lean()
 
         const totalUsers = await User.countDocuments(filters)
         const totalPages = Math.ceil(totalUsers / limitNum)

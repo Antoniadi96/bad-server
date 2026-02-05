@@ -10,7 +10,7 @@ export const uploadFile = async (
     next: NextFunction
 ) => {
     if (!req.file) {
-        return next(new BadRequestError('Файл не загружен'))
+        return res.status(400).json({ error: 'Файл не загружен' })
     }
     
     try {
@@ -18,30 +18,31 @@ export const uploadFile = async (
         const fileMimeType = mime.lookup(req.file.originalname) || req.file.mimetype
         
         if (!fileMimeType || !allowedMimeTypes.includes(fileMimeType.toString())) {
-            return next(new BadRequestError('Недопустимый тип файла. Разрешены только изображения (JPEG, PNG, GIF, WebP)'))
+            return res.status(400).json({ error: 'Недопустимый тип файла' })
         }
         
-        // Проверка расширения файла по оригинальному имени
         const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
         const fileExtension = path.extname(req.file.originalname).toLowerCase()
         if (!allowedExtensions.includes(fileExtension)) {
-            return next(new BadRequestError('Недопустимое расширение файла'))
+            return res.status(400).json({ error: 'Недопустимое расширение файла' })
         }
         
-        // Проверка размера файла
-        const maxFileSize = 5 * 1024 * 1024 // 5MB
-        const minFileSize = 2 * 1024 // 2KB
+        const maxFileSize = 5 * 1024 * 1024
+        const minFileSize = 2 * 1024
         
         if (req.file.size < minFileSize) {
-            return next(new BadRequestError('Файл слишком маленький. Минимальный размер: 2KB'))
+            return res.status(400).json({ error: 'Файл слишком маленький. Минимум 2KB' })
         }
         
         if (req.file.size > maxFileSize) {
-            return next(new BadRequestError('Файл слишком большой. Максимальный размер: 5MB'))
+            return res.status(400).json({ error: 'Файл слишком большой. Максимум 5MB' })
         }
         
-        // Используем сохраненное имя файла, а не оригинальное
+        // Проверяем, что имя файла безопасно (не содержит пути)
         const safeFileName = req.file.filename
+        if (safeFileName.includes('/') || safeFileName.includes('\\')) {
+            return res.status(400).json({ error: 'Недопустимое имя файла' })
+        }
         
         const fileName = process.env.UPLOAD_PATH
             ? `/${process.env.UPLOAD_PATH}/${safeFileName}`
@@ -57,5 +58,3 @@ export const uploadFile = async (
         return next(error)
     }
 }
-
-export default {}
