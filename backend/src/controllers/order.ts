@@ -13,6 +13,12 @@ export const getOrders = async (
     next: NextFunction
 ) => {
     try {
+        // ПРОВЕРКА РОЛИ АДМИНИСТРАТОРА
+        const user = res.locals.user
+        if (!user || !user.roles || !user.roles.includes('admin')) {
+            return next(new ForbiddenError('Доступ запрещен. Требуются права администратора'))
+        }
+
         const {
             page = 1,
             limit = 10,
@@ -31,12 +37,6 @@ export const getOrders = async (
         const limitNum = Math.min(10, Math.max(1, parseInt(limit as string, 10) || 10))
         
         const filters: FilterQuery<Partial<IOrder>> = {}
-
-        // Если пользователь не админ, показываем только его заказы
-        const user = res.locals.user
-        if (!user || !user.roles || !user.roles.includes('admin')) {
-            filters.customer = user._id
-        }
 
         // ЗАЩИТА ОТ NOSQL ИНЪЕКЦИЙ - СТРОГАЯ ПРОВЕРКА СТАТУСА
         if (status) {
