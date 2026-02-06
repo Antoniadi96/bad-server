@@ -291,19 +291,29 @@ export const createOrder = async (
             throw new BadRequestError('Не все обязательные поля заполнены')
         }
 
-        // Проверка длины телефона
-        if (phone.length > 30) {
-            throw new BadRequestError('Номер телефона слишком длинный')
+        // Проверка типа телефона (на всякий случай)
+        if (typeof phone !== 'string') {
+            throw new BadRequestError('Номер телефона должен быть строкой')
         }
 
+        // Проверка email
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
         if (!emailRegex.test(email)) {
             throw new BadRequestError('Некорректный email')
         }
 
+        // Очистка телефона от всего, кроме цифр
         const cleanedPhone = phone.replace(/\D/g, '')
+        
+        // Проверка длины после очистки
         if (cleanedPhone.length < 10 || cleanedPhone.length > 15) {
             throw new BadRequestError('Некорректный номер телефона. Должен содержать 10-15 цифр')
+        }
+
+        // Проверка формата (только цифры)
+        const phoneRegex = /^\d{10,15}$/
+        if (!phoneRegex.test(cleanedPhone)) {
+            throw new BadRequestError('Некорректный формат номера телефона')
         }
 
         if (items.length > 20) {
