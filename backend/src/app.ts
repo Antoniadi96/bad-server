@@ -30,7 +30,7 @@ app.use(helmet({
 // Rate limit
 const limiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 минут
-    max: 10, // ТОЧНО 10 для прохождения теста
+    max: 50,
     message: 'Слишком много запросов',
     standardHeaders: true,
     legacyHeaders: false,
