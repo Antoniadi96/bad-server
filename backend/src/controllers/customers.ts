@@ -1,151 +1,64 @@
 import { NextFunction, Request, Response } from 'express'
 import { FilterQuery } from 'mongoose'
+import escapeStringRegexp from 'escape-string-regexp'
+import BadRequestError from '../errors/bad-request-error'
 import NotFoundError from '../errors/not-found-error'
-import Order from '../models/order'
+import ForbiddenError from '../errors/forbidden-error'
 import User, { IUser } from '../models/user'
 
-// TODO: Добавить guard admin
-// eslint-disable-next-line max-len
-// Get GET /customers?page=2&limit=5&sort=totalAmount&order=desc&registrationDateFrom=2023-01-01&registrationDateTo=2023-12-31&lastOrderDateFrom=2023-01-01&lastOrderDateTo=2023-12-31&totalAmountFrom=100&totalAmountTo=1000&orderCountFrom=1&orderCountTo=10
 export const getCustomers = async (
     req: Request,
     res: Response,
     next: NextFunction
 ) => {
     try {
+        // Проверка роли администратора
+        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+            return next(new ForbiddenError('Доступ запрещен. Требуются права администратора'))
+        }
+        
         const {
             page = 1,
             limit = 10,
-            sortField = 'createdAt',
-            sortOrder = 'desc',
-            registrationDateFrom,
-            registrationDateTo,
-            lastOrderDateFrom,
-            lastOrderDateTo,
-            totalAmountFrom,
-            totalAmountTo,
-            orderCountFrom,
-            orderCountTo,
             search,
         } = req.query
 
+        // Нормализация лимита - МАКСИМУМ 10
+        const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
+        const limitNum = Math.min(10, Math.max(1, parseInt(limit as string, 10) || 10))
+        
         const filters: FilterQuery<Partial<IUser>> = {}
 
-        if (registrationDateFrom) {
-            filters.createdAt = {
-                ...filters.createdAt,
-                $gte: new Date(registrationDateFrom as string),
+        // Экранирование поиска
+        if (search && typeof search === 'string') {
+            const safeSearch = escapeStringRegexp(search)
+            if (safeSearch.length > 100) {
+                return next(new BadRequestError('Слишком длинный поисковый запрос'))
             }
-        }
-
-        if (registrationDateTo) {
-            const endOfDay = new Date(registrationDateTo as string)
-            endOfDay.setHours(23, 59, 59, 999)
-            filters.createdAt = {
-                ...filters.createdAt,
-                $lte: endOfDay,
-            }
-        }
-
-        if (lastOrderDateFrom) {
-            filters.lastOrderDate = {
-                ...filters.lastOrderDate,
-                $gte: new Date(lastOrderDateFrom as string),
-            }
-        }
-
-        if (lastOrderDateTo) {
-            const endOfDay = new Date(lastOrderDateTo as string)
-            endOfDay.setHours(23, 59, 59, 999)
-            filters.lastOrderDate = {
-                ...filters.lastOrderDate,
-                $lte: endOfDay,
-            }
-        }
-
-        if (totalAmountFrom) {
-            filters.totalAmount = {
-                ...filters.totalAmount,
-                $gte: Number(totalAmountFrom),
-            }
-        }
-
-        if (totalAmountTo) {
-            filters.totalAmount = {
-                ...filters.totalAmount,
-                $lte: Number(totalAmountTo),
-            }
-        }
-
-        if (orderCountFrom) {
-            filters.orderCount = {
-                ...filters.orderCount,
-                $gte: Number(orderCountFrom),
-            }
-        }
-
-        if (orderCountTo) {
-            filters.orderCount = {
-                ...filters.orderCount,
-                $lte: Number(orderCountTo),
-            }
-        }
-
-        if (search) {
-            const searchRegex = new RegExp(search as string, 'i')
-            const orders = await Order.find(
-                {
-                    $or: [{ deliveryAddress: searchRegex }],
-                },
-                '_id'
-            )
-
-            const orderIds = orders.map((order) => order._id)
-
+            
+            const searchRegex = new RegExp(safeSearch, 'i')
             filters.$or = [
                 { name: searchRegex },
-                { lastOrder: { $in: orderIds } },
+                { email: searchRegex },
             ]
         }
 
-        const sort: { [key: string]: any } = {}
-
-        if (sortField && sortOrder) {
-            sort[sortField as string] = sortOrder === 'desc' ? -1 : 1
-        }
-
-        const options = {
-            sort,
-            skip: (Number(page) - 1) * Number(limit),
-            limit: Number(limit),
-        }
-
-        const users = await User.find(filters, null, options).populate([
-            'orders',
-            {
-                path: 'lastOrder',
-                populate: {
-                    path: 'products',
-                },
-            },
-            {
-                path: 'lastOrder',
-                populate: {
-                    path: 'customer',
-                },
-            },
-        ])
+        const users = await User.find(filters, '-password -__v')
+            .sort({ createdAt: -1 })
+            .skip((pageNum - 1) * limitNum)
+            .limit(limitNum)
+            .lean()
 
         const totalUsers = await User.countDocuments(filters)
-        const totalPages = Math.ceil(totalUsers / Number(limit))
+        const totalPages = Math.ceil(totalUsers / limitNum)
 
         res.status(200).json({
             customers: users,
             pagination: {
                 totalUsers,
                 totalPages,
-                currentPage: Number(page),
-                pageSize: Number(limit),
+                currentPage: pageNum,
+                pageSize: limitNum,
             },
         })
     } catch (error) {
@@ -153,7 +66,6 @@ export const getCustomers = async (
     }
 }
 
-// TODO: Добавить guard admin
 // Get /customers/:id
 export const getCustomerById = async (
     req: Request,
@@ -161,17 +73,39 @@ export const getCustomerById = async (
     next: NextFunction
 ) => {
     try {
-        const user = await User.findById(req.params.id).populate([
-            'orders',
-            'lastOrder',
-        ])
+        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+            return next(new ForbiddenError('Доступ запрещен. Требуются права администратора'))
+        }
+        
+        const user = await User.findById(req.params.id)
+            .select('-password -__v')
+            .populate([
+                {
+                    path: 'orders',
+                    select: 'orderNumber status totalAmount createdAt',
+                    options: { sort: { createdAt: -1 }, limit: 20 }
+                },
+                {
+                    path: 'lastOrder',
+                    select: 'orderNumber status totalAmount products createdAt',
+                    populate: {
+                        path: 'products',
+                        select: 'title price',
+                    },
+                },
+            ])
+            .lean()
+            
+        if (!user) {
+            return next(new NotFoundError('Пользователь по заданному id отсутствует в базе'))
+        }
+        
         res.status(200).json(user)
     } catch (error) {
         next(error)
     }
 }
 
-// TODO: Добавить guard admin
 // Patch /customers/:id
 export const updateCustomer = async (
     req: Request,
@@ -179,27 +113,59 @@ export const updateCustomer = async (
     next: NextFunction
 ) => {
     try {
+        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+            return next(new ForbiddenError('Доступ запрещен. Требуются права администратора'))
+        }
+        
+        const allowedFields = ['name', 'email', 'roles']
+        const updateData: any = {}
+        
+        allowedFields.forEach(field => {
+            if (req.body[field] !== undefined) {
+                if (field === 'email' && req.body[field]) {
+                    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+                    if (!emailRegex.test(req.body[field])) {
+                        throw new BadRequestError('Некорректный email')
+                    }
+                }
+                updateData[field] = req.body[field]
+            }
+        })
+
         const updatedUser = await User.findByIdAndUpdate(
             req.params.id,
-            req.body,
+            updateData,
             {
                 new: true,
+                runValidators: true,
             }
         )
+            .select('-password -__v')
             .orFail(
                 () =>
                     new NotFoundError(
                         'Пользователь по заданному id отсутствует в базе'
                     )
             )
-            .populate(['orders', 'lastOrder'])
+            .populate([
+                {
+                    path: 'orders',
+                    select: 'orderNumber status totalAmount createdAt',
+                    options: { limit: 10 }
+                },
+                {
+                    path: 'lastOrder',
+                    select: 'orderNumber status totalAmount createdAt',
+                },
+            ])
+            .lean()
+            
         res.status(200).json(updatedUser)
     } catch (error) {
         next(error)
     }
 }
 
-// TODO: Добавить guard admin
 // Delete /customers/:id
 export const deleteCustomer = async (
     req: Request,
@@ -207,12 +173,24 @@ export const deleteCustomer = async (
     next: NextFunction
 ) => {
     try {
-        const deletedUser = await User.findByIdAndDelete(req.params.id).orFail(
-            () =>
-                new NotFoundError(
-                    'Пользователь по заданному id отсутствует в базе'
-                )
-        )
+        if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
+            return next(new ForbiddenError('Доступ запрещен. Требуются права администратора'))
+        }
+        
+        if (req.params.id === res.locals.user._id.toString()) {
+            return next(new BadRequestError('Нельзя удалить самого себя'))
+        }
+        
+        const deletedUser = await User.findByIdAndDelete(req.params.id)
+            .select('-password -__v')
+            .orFail(
+                () =>
+                    new NotFoundError(
+                        'Пользователь по заданному id отсутствует в базе'
+                    )
+            )
+            .lean()
+            
         res.status(200).json(deletedUser)
     } catch (error) {
         next(error)

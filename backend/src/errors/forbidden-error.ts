@@ -1,10 +1,11 @@
-class ForbiddenError extends Error {
-    public statusCode: number
+import { constants } from 'http2';
 
-    constructor(message: string) {
-        super(message)
-        this.statusCode = 403
-    }
+export default class ForbiddenError extends Error {
+  statusCode: number;
+
+  constructor(message: string) {
+    super(message);
+    this.statusCode = constants.HTTP_STATUS_FORBIDDEN;
+    this.name = 'ForbiddenError';
+  }
 }
-
-export default ForbiddenError
