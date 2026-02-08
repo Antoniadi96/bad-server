@@ -11,7 +11,7 @@ import Product from '../models/product'
 import movingFile from '../utils/movingFile'
 
 // Guard для администраторов
-const adminGuard = (req: Request, res: Response, next: NextFunction) => {
+const adminGuard = (_req: Request, res: Response, next: NextFunction) => {
     if (!res.locals.user || !res.locals.user.roles.includes('admin')) {
         return next(new UnauthorizedError('Доступ запрещен. Требуются права администратора'))
     }
@@ -44,8 +44,8 @@ const getProducts = async (req: Request, res: Response, next: NextFunction) => {
         const { page = 1, limit = 5 } = req.query
         
         // Валидация параметров пагинации
-        const pageNum = Math.max(1, parseInt(page as string) || 1)
-        const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 5))
+        const pageNum = Math.max(1, parseInt(page as string, 10) || 1)
+        const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 5))
         
         const options = {
             skip: (pageNum - 1) * limitNum,

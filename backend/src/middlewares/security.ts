@@ -25,7 +25,7 @@ export const limiter = rateLimit({
 });
 
 // Защита от XSS
-export const xssProtection = (req: Request, res: Response, next: NextFunction) => {
+export const xssProtection = (_req: Request, res: Response, next: NextFunction) => {
   // Устанавливаем заголовки безопасности
   res.setHeader('X-XSS-Protection', '1; mode=block');
   res.setHeader('X-Content-Type-Options', 'nosniff');
