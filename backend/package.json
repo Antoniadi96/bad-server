@@ -7,7 +7,6 @@
     "lint": "npx eslint src/**/*.ts",
     "format": "prettier ./src --write",
     "build": "tsc",
-    "prestart": "mkdir -p public/images public/temp",
     "dev": "npx nodemon -L src/app.ts",
     "start": "ts-node src/app.ts",
     "test": "echo \"Error: no test specified\" && exit 1"

@@ -32,13 +32,6 @@ export const xssProtection = (req: Request, res: Response, next: NextFunction) =
   next();
 };
 
-// CORS настройки
-export const corsOptions = {
-  origin: process.env.ORIGIN_ALLOW || 'http://localhost:5173',
-  credentials: true,
-  optionsSuccessStatus: 200,
-};
-
 // Проверка MIME-типов файлов
 export const validateFileType = (req: Request, res: Response, next: NextFunction) => {
   if (req.file) {

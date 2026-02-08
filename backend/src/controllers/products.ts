@@ -1,7 +1,7 @@
 import { NextFunction, Request, Response } from 'express'
 import { constants } from 'http2'
 import { Error as MongooseError } from 'mongoose'
-import { join, basename, resolve, normalize } from 'path'
+import { join, basename, normalize } from 'path'
 import validator from 'validator'
 import BadRequestError from '../errors/bad-request-error'
 import ConflictError from '../errors/conflict-error'

@@ -1,8 +1,6 @@
 import { NextFunction, Request, Response } from 'express'
-import { constants } from 'http2'
 import path from 'path'
 import mime from 'mime-types'
-import BadRequestError from '../errors/bad-request-error'
 import fs from 'fs'
 import sharp from 'sharp'
 
@@ -81,7 +79,7 @@ export const uploadFile = async (
             
         return res.status(201).json({
             fileName,
-            originalName: originalName,
+            originalName,
             size: req.file.size,
             mimetype: fileMimeType,
         })

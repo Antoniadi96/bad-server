@@ -14,7 +14,7 @@ export const getOrders = async (
 ) => {
     try {
         // ПРОВЕРКА РОЛИ АДМИНИСТРАТОРА
-        const user = res.locals.user
+        const {user} = res.locals
         if (!user || !user.roles || !user.roles.includes('admin')) {
             return next(new ForbiddenError('Доступ запрещен. Требуются права администратора'))
         }
@@ -203,7 +203,7 @@ export const getOrderByNumber = async (
         }
         
         const order = await Order.findOne({
-            orderNumber: orderNumber,
+            orderNumber,
         })
             .populate([
                 {
@@ -246,7 +246,7 @@ export const getOrderCurrentUserByNumber = async (
         }
         
         const order = await Order.findOne({
-            orderNumber: orderNumber,
+            orderNumber,
             customer: userId
         })
             .populate([
@@ -291,7 +291,7 @@ export const createOrder = async (
             throw new BadRequestError('Не все обязательные поля заполнены')
         }
 
-        // Проверка типа телефона (на всякий случай)
+        // Проверка типа телефона
         if (typeof phone !== 'string') {
             throw new BadRequestError('Номер телефона должен быть строкой')
         }
@@ -403,7 +403,7 @@ export const updateOrder = async (
         }
         
         const updatedOrder = await Order.findOneAndUpdate(
-            { orderNumber: orderNumber },
+            { orderNumber },
             { status },
             { new: true, runValidators: true }
         )

@@ -1,9 +1,8 @@
 import { NextFunction, Request, Response } from 'express'
 import jwt, { JwtPayload } from 'jsonwebtoken'
-import { Model, Types } from 'mongoose'
+import { Types } from 'mongoose'
 import { ACCESS_TOKEN, JWT_SECRET } from '../config'
 import ForbiddenError from '../errors/forbidden-error'
-import NotFoundError from '../errors/not-found-error'
 import UnauthorizedError from '../errors/unauthorized-error'
 import UserModel, { Role } from '../models/user'
 
